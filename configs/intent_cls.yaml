@@ -1,0 +1,15 @@
+# Intent classification model training configuration
+
+model: qwen/Qwen2-7B
+num_intents: 3
+
+lr: 2e-5
+batch_size: 16
+max_epochs: 5
+
+output_dir: ckpt/intent_cls/qwen2-7b
+
+# Data configuration
+data:
+  train_path: data/gold/goodm_gold.jsonl
+  val_path: data/gold/goodm_gold_val.jsonl
