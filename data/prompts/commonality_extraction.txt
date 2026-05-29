@@ -1,0 +1,9 @@
+Based on the detailed explanations of the following two concepts, extract their shared features or commonalities:
+
+【Concept 1 Explanation】
+{ee}
+
+【Concept 2 Explanation】
+{ve}
+
+Please analyze the common characteristics of these two concepts and extract their commonalities (Commonality):

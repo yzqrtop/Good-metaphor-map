@@ -17,6 +17,17 @@ data:
 	python -m src.merge.merge_best --in data/scored/goodm_scored.jsonl \
 	                                 --out data/gold/goodm_gold.jsonl
 
+# Generate using new GoodM pipeline (with multi-round consensus)
+generate-goodm:
+	python -m src.generate.pipeline --in data/raw/cxd_idioms.jsonl \
+	                                    --out data/gen/goodm_pipeline.jsonl \
+	                                    --model qwen-plus --rounds 3
+
+# Run ablation experiments
+ablation:
+	python -m experiments.ablation --in data/gold/goodm_gold.jsonl \
+	                                  --out results/ablation.json
+
 # Train intent classifier
 train:
 	python src/train/train.py --config-name intent_cls
