@@ -14,13 +14,13 @@ class GoodMTuple:
     GoodM Seven-Tuple Data Structure
     
     Attributes:
-        E: Entity (本体) - The first part of the two-part allegorical saying, the thing being compared
-        V: Vehicle (喻体) - The second part of the two-part allegorical saying, the thing used for comparison
-        EE: Entity Explanation (本体阐释) - Detailed explanation of the entity
-        VE: Vehicle Explanation (喻体阐释) - Detailed explanation of the vehicle
-        C: Commonality (共性特征) - Shared features between EE and VE
-        Sc: Scenario (场景泛化) - Scenario generalized from EE and VE
-        Sy: Synthesis (综合意义) - Deep meaning synthesized from Sc and C
+        E: Essence (riddle-like expression) - The first part of the allegorical saying
+        V: Vehicle (literal explanation) - The second part of the allegorical saying
+        EE: Essence Explanation - Detailed explanation of the essence
+        VE: Vehicle Explanation - Detailed explanation of the vehicle
+        C: Commonality (cross-domain alignment) - Shared features between EE and VE
+        Sc: Scene (situational grounding) - Scenario generalized from EE and VE
+        Sy: Synthetics (pragmatic consequence) - Deep meaning synthesized from Sc and C
     """
     E: str = ""
     V: str = ""
@@ -78,8 +78,8 @@ class GoodMTuple:
             f"Essence Explanation: {self.EE}\n"
             f"Vehicle Explanation: {self.VE}\n"
             f"Commonality: {self.C}\n"
-            f"Scenario: {self.Sc}\n"
-            f"Synthesis: {self.Sy}"
+            f"Scene: {self.Sc}\n"
+            f"Synthetics: {self.Sy}"
         )
     
     def to_embedding_input(self) -> List[str]:

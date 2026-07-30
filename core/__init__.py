@@ -1,5 +1,5 @@
 """
-GoodM Core Module - 核心数据结构定义
+GoodM Core Module - Core data structure definitions
 """
 
 from .schema import GoodMTuple

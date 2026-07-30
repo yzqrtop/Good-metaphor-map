@@ -1,67 +1,50 @@
-# Makefile for GoodM metaphor project
+# Makefile for GoodM Framework
 
 # Install dependencies
 install:
 	pip install -e .
-	pip install pre-commit
-	pre-commit install
-
-# Generate data pipeline (0-4 stages)
-data:
-	python -m src.crawler.crawl_cxd --out data/raw/cxd_idioms.jsonl
-	python -m src.generate.batch_gen --in data/raw/cxd_idioms.jsonl \
-	                                    --out data/gen/goodm_raw.jsonl \
-	                                    --model qwen-plus --workers 32
-	python -m src.minieval.score --in data/gen/goodm_raw.jsonl \
-	                                --out data/scored/goodm_scored.jsonl
-	python -m src.merge.merge_best --in data/scored/goodm_scored.jsonl \
-	                                 --out data/gold/goodm_gold.jsonl
-
-# Generate using new GoodM pipeline (with multi-round consensus)
-generate-goodm:
-	python -m src.generate.pipeline --in data/raw/cxd_idioms.jsonl \
-	                                    --out data/gen/goodm_pipeline.jsonl \
-	                                    --model qwen-plus --rounds 3
-
-# Run ablation experiments
-ablation:
-	python -m experiments.ablation --in data/gold/goodm_gold.jsonl \
-	                                  --out results/ablation.json
-
-# Train intent classifier
-train:
-	python src/train/train.py --config-name intent_cls
-
-# Build search index
-index:
-	python -m src.search.index --in data/gold/goodm_gold.jsonl
-
-# Run API service
-api:
-	uvicorn src.search.api:app --reload --host 0.0.0.0 --port 8000
-
-# Add cross-cultural labels
-xcultural:
-	python -m src.xcultural.label --in data/gold/goodm_gold.jsonl \
-	                                 --out data/xcultural/goodm_xc.jsonl
+	pip install -e ".[dev]"
 
 # Run tests
 test:
-	pytest tests/ -v
+	python -m pytest tests/ -v
 
-# Run pre-commit hooks
-lint:
-	pre-commit run -a
+# Run basic example
+example:
+	python examples/basic_usage.py
+
+# Run specific RQ experiment
+rq1:
+	python run_experiments.py --rq 1
+
+rq2:
+	python run_experiments.py --rq 2
+
+rq3:
+	python run_experiments.py --rq 3
+
+rq4:
+	python run_experiments.py --rq 4
+
+rq5:
+	python run_experiments.py --rq 5
+
+rq6:
+	python run_experiments.py --rq 6
+
+# Run all experiments
+all:
+	python run_experiments.py --all
+
+# Run experiments with specific model
+rq1-gpt4:
+	python run_experiments.py --rq 1 --model gpt-4
+
+rq5-qwen:
+	python run_experiments.py --rq 5 --model qwen-plus
 
 # Clean generated files
 clean:
-	rm -rf data/gen/* data/scored/* data/gold/* data/xcultural/*
-	rm -rf .pytest_cache/ __pycache__/
-
-# Docker commands
-docker-up:
-	docker-compose up -d milvus
-	docker-compose up -d api
-
-docker-down:
-	docker-compose down
+	find . -type d -name "__pycache__" -exec rm -rf {} +
+	find . -type d -name ".pytest_cache" -exec rm -rf {} +
+	find . -type f -name "*.pyc" -delete

@@ -1,17 +1,17 @@
-# 基于 Python 3.9 镜像
+# GoodM Framework Dockerfile
 FROM python:3.9-slim
 
-# 设置工作目录
+# Set working directory
 WORKDIR /app
 
-# 复制项目文件
+# Copy project files
 COPY . .
 
-# 安装依赖
+# Install dependencies
 RUN pip install --no-cache-dir -e .
 
-# 暴露端口
+# Expose port
 EXPOSE 8000
 
-# 启动服务
-CMD ["uvicorn", "src.06_search.api:app", "--host", "0.0.0.0", "--port", "8000"]
+# Default command: run example
+CMD ["python", "examples/basic_usage.py"]
