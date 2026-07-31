@@ -38,12 +38,11 @@ class CTRCDataset:
         """
         if self._loaded:
             return self._data
-        
+
         if self.data_path is None:
-            self._data = self._create_dummy_data()
-        else:
-            self._data = self._load_from_file(self.data_path)
-        
+            raise ValueError("data_path must be provided to load CTRC dataset")
+
+        self._data = self._load_from_file(self.data_path)
         self._loaded = True
         return self._data
     
@@ -65,43 +64,6 @@ class CTRCDataset:
             data = json.load(f)
         
         return data
-    
-    def _create_dummy_data(self) -> List[Dict[str, Any]]:
-        """
-        Create dummy data for testing
-        
-        Returns:
-            List[Dict]: Dummy entries
-        """
-        dummy_data = [
-            {
-                'id': 'ctrc_0001',
-                'paragraph': 'The bamboo basket appeared empty after all the effort.',
-                'candidates': [
-                    'futile',
-                    'successful',
-                    'overflowing',
-                    'broken'
-                ],
-                'answer': 0,  # Index of correct answer
-                'type': 'cloze',
-                'split': 'test'
-            },
-            {
-                'id': 'ctrc_0002',
-                'paragraph': 'Despite the clay Buddha\'s efforts, it could not cross the river.',
-                'candidates': [
-                    'self-sufficient',
-                    'in danger',
-                    'powerful',
-                    'invincible'
-                ],
-                'answer': 1,
-                'type': 'cloze',
-                'split': 'test'
-            }
-        ]
-        return dummy_data
     
     def get_test_set(self) -> List[Dict[str, Any]]:
         """

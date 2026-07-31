@@ -41,12 +41,11 @@ class IntentSubset:
         """
         if self._loaded:
             return self._data
-        
+
         if self.data_path is None:
-            self._data = self._create_dummy_data()
-        else:
-            self._data = self._load_from_file(self.data_path)
-        
+            raise ValueError("data_path must be provided to load Intent Subset dataset")
+
+        self._data = self._load_from_file(self.data_path)
         self._loaded = True
         return self._data
     
@@ -68,41 +67,6 @@ class IntentSubset:
             data = json.load(f)
         
         return data
-    
-    def _create_dummy_data(self) -> List[Dict[str, Any]]:
-        """
-        Create dummy data for testing
-        
-        Returns:
-            List[Dict]: Dummy entries
-        """
-        dummy_data = [
-            {
-                'id': 'intent_001',
-                'paragraph': 'Bamboo basket draws water - all in vain.',
-                'intent': 'warn',
-                'sy_annotation': 'Futile effort yields no results',
-                'split': 'test',
-                'annotator_agreement': 0.80
-            },
-            {
-                'id': 'intent_002',
-                'paragraph': 'Clay Buddha crossing the river - can\'t protect itself.',
-                'intent': 'educate',
-                'sy_annotation': 'A lesson about self-preservation',
-                'split': 'test',
-                'annotator_agreement': 0.75
-            },
-            {
-                'id': 'intent_003',
-                'paragraph': 'Weasel pays chicken a New Year call - no good intentions.',
-                'intent': 'persuade',
-                'sy_annotation': 'Beware of false friendships',
-                'split': 'test',
-                'annotator_agreement': 0.78
-            }
-        ]
-        return dummy_data
     
     def get_intent_distribution(self) -> Dict[str, int]:
         """

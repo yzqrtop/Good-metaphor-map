@@ -39,12 +39,11 @@ class GoodMDataset:
         """
         if self._loaded:
             return self._data
-        
+
         if self.data_path is None:
-            self._data = self._create_dummy_data()
-        else:
-            self._data = self._load_from_file(self.data_path)
-        
+            raise ValueError("data_path must be provided to load GoodM dataset")
+
+        self._data = self._load_from_file(self.data_path)
         self._loaded = True
         return self._data
     
@@ -66,41 +65,6 @@ class GoodMDataset:
             data = json.load(f)
         
         return data
-    
-    def _create_dummy_data(self) -> List[Dict[str, Any]]:
-        """
-        Create dummy data for testing
-        
-        Returns:
-            List[Dict]: Dummy dataset entries
-        """
-        dummy_data = [
-            {
-                'id': 'goodm_001',
-                'E': 'bamboo basket',
-                'V': 'all in vain',
-                'EE': 'A basket woven from bamboo, with loose structure that cannot hold water',
-                'VE': 'Completely empty, achieving nothing',
-                'C': 'Unable to retain or preserve',
-                'Sc': 'A situation where effort yields no results',
-                'Sy': 'Futile effort, wasted labor',
-                'split': 'train',
-                'source': 'goodm_structured'
-            },
-            {
-                'id': 'goodm_002',
-                'E': 'clay Buddha',
-                'V': 'cannot cross the river',
-                'EE': 'A Buddha statue made of clay, which dissolves when encountering water',
-                'VE': 'Unable to protect oneself, let alone others',
-                'C': 'Fragile, incapable of self-preservation',
-                'Sc': 'Being in danger and unable to help others',
-                'Sy': 'Too preoccupied with self-preservation to help others',
-                'split': 'train',
-                'source': 'goodm_structured'
-            }
-        ]
-        return dummy_data
     
     def to_tuples(self) -> List[GoodMTuple]:
         """

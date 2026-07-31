@@ -87,15 +87,15 @@ pip install -e .
 ```python
 from core.schema import GoodMTuple
 
-# Create seven-tuple
+# Create seven-tuple with real Chinese xielingyu data
 tuple_obj = GoodMTuple(
-    E="bamboo basket",
-    V="all in vain",
-    EE="A basket woven from bamboo, with loose structure",
-    VE="Completely empty, achieving nothing",
-    C="Unable to retain or preserve",
-    Sc="A situation where effort yields no results",
-    Sy="Futile effort, wasted labor"
+    E="王婆卖瓜",
+    V="自买自夸",
+    EE="王婆在集市上卖瓜，比喻自我吹嘘",
+    VE="自己买自己的瓜，自己夸奖自己的货物",
+    C="对自己的东西进行过度夸奖，自我标榜",
+    Sc="市场交易场景中卖方过度宣传商品",
+    Sy="讽刺自吹自擂的行为，提醒要客观看待事物"
 )
 
 # Validate
@@ -135,9 +135,9 @@ embedder = JinaEmbedder()
 entity_expander = EntityExpansion(embedder=embedder)
 vehicle_expander = VehicleExpansion(embedder=embedder)
 
-# Expand entities
-EE = entity_expander.expand("bamboo basket")
-VE = vehicle_expander.expand("all in vain")
+# Expand entities (real xielingyu)
+EE = entity_expander.expand("王婆卖瓜")
+VE = vehicle_expander.expand("自买自夸")
 
 # Extract commonality
 extractor = CommonalityExtraction(embedder=embedder)
@@ -161,15 +161,15 @@ from core.schema import GoodMTuple
 # Create verifier
 verifier = ConstraintVerifier()
 
-# Verify tuple
+# Verify tuple with real xielingyu data
 tuple_obj = GoodMTuple(
-    E="bamboo basket",
-    V="all in vain",
-    EE="...",
-    VE="...",
-    C="...",
-    Sc="...",
-    Sy="..."
+    E="王婆卖瓜",
+    V="自买自夸",
+    EE="比喻自我吹嘘、自我标榜",
+    VE="自己夸奖自己的货物",
+    C="自我标榜、自我吹嘘",
+    Sc="市场交易场景",
+    Sy="讽刺自吹自擂的行为"
 )
 
 results = verifier.verify_all(tuple_obj)

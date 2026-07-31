@@ -1,5 +1,6 @@
 """
 Tests for GoodMTuple core data structure
+Uses real Chinese xielingyu (allegorical saying) data
 """
 
 import pytest
@@ -7,7 +8,7 @@ from core.schema import GoodMTuple
 
 
 class TestGoodMTuple:
-    """Test GoodMTuple class"""
+    """Test GoodMTuple class with real xielingyu data"""
     
     def test_create_empty_tuple(self):
         """Test creating an empty tuple"""
@@ -21,47 +22,47 @@ class TestGoodMTuple:
         assert tuple_obj.Sy == ""
     
     def test_create_complete_tuple(self):
-        """Test creating a complete tuple"""
+        """Test creating a complete tuple with real xielingyu data"""
         tuple_obj = GoodMTuple(
-            E="bamboo basket",
-            V="all in vain",
-            EE="A basket woven from bamboo",
-            VE="Completely empty",
-            C="Unable to retain",
-            Sc="Effort without results",
-            Sy="Futile effort"
+            E="王婆卖瓜",
+            V="自买自夸",
+            EE="王婆在集市上卖瓜，比喻自我吹嘘",
+            VE="自己买自己的瓜，自己夸奖自己的货物",
+            C="自我吹嘘、自我标榜",
+            Sc="市场交易场景中的过度宣传",
+            Sy="讽刺自吹自擂的行为"
         )
-        assert tuple_obj.E == "bamboo basket"
-        assert tuple_obj.Sy == "Futile effort"
+        assert tuple_obj.E == "王婆卖瓜"
+        assert tuple_obj.Sy == "讽刺自吹自擂的行为"
     
     def test_validate_complete_tuple(self):
         """Test validation of complete tuple"""
         tuple_obj = GoodMTuple(
-            E="bamboo basket",
-            V="all in vain",
-            EE="A basket woven from bamboo",
-            VE="Completely empty",
-            C="Unable to retain",
-            Sc="Effort without results",
-            Sy="Futile effort"
+            E="井底之蛙",
+            V="没见过大世面",
+            EE="井底的青蛙，比喻见识短浅的人",
+            VE="没有见过大的世面，形容见识狭隘",
+            C="见识短浅、视野狭隘",
+            Sc="局限于狭小空间或环境中",
+            Sy="告诫人们不要固步自封"
         )
         assert tuple_obj.validate() is True
     
     def test_validate_incomplete_tuple(self):
         """Test validation of incomplete tuple"""
         tuple_obj = GoodMTuple(
-            E="bamboo basket",
-            V="all in vain"
+            E="竹篮打水",
+            V="一场空"
         )
         assert tuple_obj.validate() is False
     
     def test_validate_with_details(self):
         """Test detailed validation"""
         tuple_obj = GoodMTuple(
-            E="bamboo basket",
-            V="all in vain",
-            EE="A basket woven from bamboo",
-            VE="Completely empty"
+            E="守株待兔",
+            V="妄想",
+            EE="守着树桩等待兔子",
+            VE="不切实际的幻想"
         )
         result = tuple_obj.validate_with_details()
         assert result['is_valid'] is False
@@ -72,88 +73,88 @@ class TestGoodMTuple:
     def test_to_prefix(self):
         """Test prefix format"""
         tuple_obj = GoodMTuple(
-            E="bamboo basket",
-            V="all in vain",
-            EE="A basket woven from bamboo",
-            VE="Completely empty",
-            C="Unable to retain",
-            Sc="Effort without results",
-            Sy="Futile effort"
+            E="王婆卖瓜",
+            V="自买自夸",
+            EE="比喻自我吹嘘",
+            VE="自己夸奖自己的货物",
+            C="自我标榜",
+            Sc="市场交易场景",
+            Sy="讽刺自吹自擂"
         )
         prefix = tuple_obj.to_prefix()
-        assert "Essence: bamboo basket" in prefix
-        assert "Synthetics: Futile effort" in prefix
+        assert "Essence: 王婆卖瓜" in prefix
+        assert "Synthetics: 讽刺自吹自擂" in prefix
     
     def test_to_embedding_input(self):
         """Test embedding input format"""
         tuple_obj = GoodMTuple(
-            E="bamboo basket",
-            V="all in vain",
-            EE="A basket woven from bamboo",
-            VE="Completely empty",
-            C="Unable to retain",
-            Sc="Effort without results",
-            Sy="Futile effort"
+            E="井底之蛙",
+            V="没见过大世面",
+            EE="井底的青蛙",
+            VE="见识狭隘",
+            C="见识短浅",
+            Sc="局限环境",
+            Sy="开阔眼界"
         )
         embeddings = tuple_obj.to_embedding_input()
         assert len(embeddings) == 7
-        assert embeddings[0] == "bamboo basket"
+        assert embeddings[0] == "井底之蛙"
     
     def test_to_dict(self):
         """Test dictionary conversion"""
         tuple_obj = GoodMTuple(
-            E="bamboo basket",
-            V="all in vain"
+            E="画蛇添足",
+            V="多此一举"
         )
         d = tuple_obj.to_dict()
-        assert d['E'] == "bamboo basket"
-        assert d['V'] == "all in vain"
+        assert d['E'] == "画蛇添足"
+        assert d['V'] == "多此一举"
     
     def test_from_dict(self):
         """Test creating from dictionary"""
         data = {
-            'E': 'bamboo basket',
-            'V': 'all in vain',
-            'EE': 'explanation1',
-            'VE': 'explanation2',
-            'C': 'commonality',
-            'Sc': 'scene',
-            'Sy': 'synthetics'
+            'E': '掩耳盗铃',
+            'V': '自欺欺人',
+            'EE': '捂住耳朵偷铃铛',
+            'VE': '欺骗自己和他人',
+            'C': '自欺欺人',
+            'Sc': '欺骗场景',
+            'Sy': '告诫诚实'
         }
         tuple_obj = GoodMTuple.from_dict(data)
-        assert tuple_obj.E == "bamboo basket"
-        assert tuple_obj.Sy == "synthetics"
+        assert tuple_obj.E == "掩耳盗铃"
+        assert tuple_obj.Sy == "告诫诚实"
     
     def test_to_json(self):
         """Test JSON conversion"""
         tuple_obj = GoodMTuple(
-            E="bamboo basket",
-            V="all in vain"
+            E="亡羊补牢",
+            V="为时未晚"
         )
         json_str = tuple_obj.to_json()
-        assert '"E": "bamboo basket"' in json_str
+        assert '"E": "亡羊补牢"' in json_str
     
     def test_from_json(self):
         """Test creating from JSON"""
         import json
         data = {
-            'E': 'bamboo basket',
-            'V': 'all in vain'
+            'E': '刻舟求剑',
+            'V': '拘泥不知变通'
         }
         json_str = json.dumps(data)
         tuple_obj = GoodMTuple.from_json(json_str)
-        assert tuple_obj.E == "bamboo basket"
+        assert tuple_obj.E == "刻舟求剑"
     
     def test_get_core_fields(self):
         """Test getting core fields"""
         tuple_obj = GoodMTuple(
-            E="bamboo basket",
-            V="all in vain",
-            EE="explanation1",
-            VE="explanation2",
-            C="commonality",
-            Sc="scene",
-            Sy="synthetics"
+            E="塞翁失马",
+            V="焉知非福",
+            EE="边塞老人丢失了马",
+            VE="怎么知道不是福气",
+            C="祸福相依",
+            Sc="人生际遇",
+            Sy="辩证看待得失"
         )
         core = tuple_obj.get_core_fields()
         assert len(core) == 7
@@ -162,16 +163,16 @@ class TestGoodMTuple:
     
     def test_equality(self):
         """Test equality comparison"""
-        t1 = GoodMTuple(E="test", V="test")
-        t2 = GoodMTuple(E="test", V="test")
-        t3 = GoodMTuple(E="different", V="test")
+        t1 = GoodMTuple(E="对牛弹琴", V="白费口舌")
+        t2 = GoodMTuple(E="对牛弹琴", V="白费口舌")
+        t3 = GoodMTuple(E="缘木求鱼", V="白费力气")
         assert t1 == t2
         assert t1 != t3
     
     def test_hash(self):
         """Test hash functionality"""
-        t1 = GoodMTuple(E="test", V="test")
-        t2 = GoodMTuple(E="test", V="test")
+        t1 = GoodMTuple(E="一石二鸟", V="一举两得")
+        t2 = GoodMTuple(E="一石二鸟", V="一举两得")
         assert hash(t1) == hash(t2)
         s = {t1, t2}
         assert len(s) == 1
@@ -193,13 +194,13 @@ class TestConstraintVerifier:
         verifier = ConstraintVerifier()
         
         tuple_obj = GoodMTuple(
-            E="bamboo basket",
-            V="all in vain",
-            EE="explanation1",
-            VE="explanation2",
-            C="commonality",
-            Sc="scene",
-            Sy="synthetics"
+            E="王婆卖瓜",
+            V="自买自夸",
+            EE="比喻自我吹嘘",
+            VE="自己夸奖自己的货物",
+            C="自我标榜",
+            Sc="市场交易场景",
+            Sy="讽刺自吹自擂"
         )
         results = verifier.verify_all(tuple_obj)
         # Without embedder, all constraints should pass
@@ -207,13 +208,14 @@ class TestConstraintVerifier:
         assert results['overall']['passed'] is True
     
     def test_compute_cpr(self):
-        """Test CPR computation"""
+        """Test CPR computation with real xielingyu"""
         from constraints import ConstraintVerifier
         verifier = ConstraintVerifier()
         
         tuples = [
-            GoodMTuple(E="test1", V="test1", EE="e1", VE="v1", C="c1", Sc="s1", Sy="sy1"),
-            GoodMTuple(E="test2", V="test2", EE="e2", VE="v2", C="c2", Sc="s2", Sy="sy2"),
+            GoodMTuple(E="井底之蛙", V="没见过大世面", EE="e1", VE="v1", C="c1", Sc="s1", Sy="sy1"),
+            GoodMTuple(E="竹篮打水", V="一场空", EE="e2", VE="v2", C="c2", Sc="s2", Sy="sy2"),
+            GoodMTuple(E="守株待兔", V="妄想", EE="e3", VE="v3", C="c3", Sc="s3", Sy="sy3"),
         ]
         cpr = verifier.compute_cpr(tuples)
         # Without embedder, all should pass
@@ -239,14 +241,14 @@ class TestConstraintVerifier:
 
 
 class TestOperators:
-    """Test processing operators"""
+    """Test processing operators with real xielingyu"""
     
     def test_entity_expansion(self):
         """Test entity expansion operator"""
         from operators import EntityExpansion
         
         expander = EntityExpansion()
-        result = expander.expand("bamboo basket")
+        result = expander.expand("王婆卖瓜")
         assert isinstance(result, str)
         assert len(result) > 0
     
@@ -255,7 +257,7 @@ class TestOperators:
         from operators import VehicleExpansion
         
         expander = VehicleExpansion()
-        result = expander.expand("all in vain")
+        result = expander.expand("自买自夸")
         assert isinstance(result, str)
         assert len(result) > 0
     
@@ -265,8 +267,8 @@ class TestOperators:
         
         extractor = CommonalityExtraction()
         result = extractor.extract(
-            "A basket woven from bamboo",
-            "Completely empty, achieving nothing"
+            "比喻自我吹嘘、自我标榜",
+            "自己夸奖自己的货物"
         )
         assert isinstance(result, str)
         assert len(result) > 0
@@ -277,8 +279,8 @@ class TestOperators:
         
         generator = SceneGeneralization()
         result = generator.generalize(
-            "A basket woven from bamboo",
-            "Completely empty, achieving nothing"
+            "比喻自我吹嘘、自我标榜",
+            "自己夸奖自己的货物"
         )
         assert isinstance(result, str)
         assert len(result) > 0
@@ -289,8 +291,8 @@ class TestOperators:
         
         synthesizer = Synthesis()
         result = synthesizer.synthesize(
-            "A situation where effort produces no results",
-            "Unable to retain or preserve"
+            "市场交易场景中的过度宣传",
+            "自我吹嘘、自我标榜"
         )
         assert isinstance(result, str)
         assert len(result) > 0
@@ -312,7 +314,7 @@ class TestJinaEmbedder:
         import numpy as np
         
         embedder = JinaEmbedder()
-        embedding = embedder.encode("test text")
+        embedding = embedder.encode("测试文本")
         assert isinstance(embedding, np.ndarray)
         assert len(embedding) == 768
     
@@ -321,7 +323,7 @@ class TestJinaEmbedder:
         from embeddings import JinaEmbedder
         
         embedder = JinaEmbedder()
-        similarity = embedder.cosine_similarity("test", "test")
+        similarity = embedder.cosine_similarity("王婆卖瓜", "王婆卖瓜")
         assert 0.0 <= similarity <= 1.0
     
     def test_batch_encode(self):
@@ -330,6 +332,6 @@ class TestJinaEmbedder:
         import numpy as np
         
         embedder = JinaEmbedder()
-        embeddings = embedder.encode_batch(["text1", "text2"])
+        embeddings = embedder.encode_batch(["井底之蛙", "竹篮打水"])
         assert isinstance(embeddings, np.ndarray)
         assert embeddings.shape[0] == 2

@@ -38,12 +38,11 @@ class OODDataset:
         """
         if self._loaded:
             return self._data
-        
+
         if self.data_path is None:
-            self._data = self._create_dummy_data()
-        else:
-            self._data = self._load_from_file(self.data_path)
-        
+            raise ValueError("data_path must be provided to load OOD dataset")
+
+        self._data = self._load_from_file(self.data_path)
         self._loaded = True
         return self._data
     
@@ -65,51 +64,6 @@ class OODDataset:
             data = json.load(f)
         
         return data
-    
-    def _create_dummy_data(self) -> List[Dict[str, Any]]:
-        """
-        Create dummy data for testing
-        
-        Returns:
-            List[Dict]: Dummy entries
-        """
-        dummy_data = [
-            {
-                'id': 'ood_001',
-                'E': 'old monk',
-                'V': 'eats meat',
-                'EE': 'A monk who has been practicing for many years',
-                'VE': 'Consumes meat despite religious vows',
-                'C': 'Hypocrisy, not following one\'s own principles',
-                'Sc': 'A situation where someone acts contrary to their stated beliefs',
-                'Sy': 'Hypocrisy: not practicing what one preaches',
-                'expert_labels': {
-                    'expert1': 'Hypocrisy',
-                    'expert2': 'Hypocrisy',
-                    'expert3': 'Inconsistency'
-                },
-                'agreement_score': 0.85,
-                'decontamination_flagged': False
-            },
-            {
-                'id': 'ood_002',
-                'E': 'paper tiger',
-                'V': 'easily defeated',
-                'EE': 'A tiger made of paper, looks fierce but is harmless',
-                'VE': 'Easily overcome or defeated',
-                'C': 'Appearance does not match reality',
-                'Sc': 'Encountering something that appears threatening but is actually weak',
-                'Sy': 'Don\'t fear things that look powerful but are actually impotent',
-                'expert_labels': {
-                    'expert1': 'Futility of appearances',
-                    'expert2': 'Empty threats',
-                    'expert3': 'Paper tiger'
-                },
-                'agreement_score': 0.80,
-                'decontamination_flagged': False
-            }
-        ]
-        return dummy_data
     
     def get_expert_labels(self) -> Dict[str, List[str]]:
         """
@@ -137,7 +91,7 @@ class OODDataset:
             float: Agreement score (Krippendorff's alpha)
         """
         return 0.79  # As reported in paper
-    
+
     def get_decontamination_stats(self) -> Dict[str, Any]:
         """
         Get decontamination statistics
