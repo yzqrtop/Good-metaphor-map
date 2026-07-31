@@ -1,5 +1,17 @@
-Please provide a detailed explanation of the following concept, including its meaning, characteristics, uses, cultural background, etc.:
+[System] You are a text refinement assistant. Given the structured semantic components extracted from an Essence (E), assemble them into a coherent, fluent Essence Explanation (EE). Do not add new semantic content; only improve fluency and readability.
 
-Concept: {entity}
+[Few-shot example]
+Input structured components:
+  Subject: "Wang Po"
+  Action: "selling melons"
+  Object: "melons"
+  Scene: "marketplace"
+  Attributes: {"vendor", "elderly female", "commercial transaction", "promotion"}
+Output EE: "A female vendor named Wang Po is selling melons in the market, constantly praising how good her melons are to customers."
 
-Please provide a comprehensive and detailed explanation to help understand the essence of this concept:
+[Task input]
+Subject: {extracted_subject}
+Action: {extracted_action}
+Object: {extracted_object}
+Scene: {extracted_scene}
+Attributes: {retrieved_attributes}

@@ -1,182 +1,181 @@
 """
-Φ_EE Operator: Entity Expansion (E → L)
+Φ_EE Operator: Essence Explanation (E → EE)
 
-Expands E (Essence) into detailed explanation via:
-1. Semantic role labeling
-2. HowNet knowledge retrieval
-3. Fluency refinement using Qwen2.5-1.5B (temp=0.1)
+Expands E (Essence) into Essence Explanation via:
+1. Semantic Role Labeling (SRL) to extract Subject, Action, Object, Scene, Attributes
+2. HowNet knowledge retrieval to enrich attributes
+3. Fluency refinement ONLY using small LLM (Qwen2.5-1.5B, temp=0.1)
+
+Important: The LLM is NOT used to generate new semantic content. It only assembles
+the pre-extracted structured components into a coherent sentence.
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Set
+import os
 from ..models.llm_wrappers import BaseLLM
 from ..embeddings import JinaEmbedder
 
 
+PROMPT_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "prompts", "entity_expansion.txt"
+)
+
+
 class EntityExpansion:
     """
-    Entity Expansion Operator (Φ_EE: E → L)
-    
-    Expands the Essence (E) into a detailed explanation (EE) by:
-    1. Parsing semantic roles from the essence text
-    2. Retrieving HowNet knowledge for enrichment
-    3. Refining fluency with small LLM (Qwen2.5-1.5B, temperature=0.1)
+    Essence Explanation Operator (Φ_EE: E → L)
+
+    Pipeline:
+        SRL extraction → HowNet retrieval → structured components → LLM fluency assembly
+
+    Attributes:
+        llm_client: Small LLM (e.g., Qwen2.5-1.5B) used ONLY for fluency refinement
+        embedder: Jina embedder for faithfulness constraint verification
+        hownet_path: Path to HowNet knowledge base (optional)
+        prompt_template: Loaded from data/prompts/entity_expansion.txt
     """
-    
+
     def __init__(
         self,
         llm_client: Optional[BaseLLM] = None,
         embedder: Optional[JinaEmbedder] = None,
-        hownet_path: Optional[str] = None
+        hownet_path: Optional[str] = None,
     ):
-        """
-        Initialize Entity Expansion operator
-        
-        Args:
-            llm_client: LLM client for fluency refinement
-            embedder: Jina embedder for semantic verification
-            hownet_path: Path to HowNet knowledge base
-        """
         self.llm_client = llm_client
         self.embedder = embedder
         self.hownet_path = hownet_path
-        
+        self.prompt_template = self._load_prompt_template()
+
+    def _load_prompt_template(self) -> str:
+        if os.path.exists(PROMPT_FILE):
+            with open(PROMPT_FILE, "r", encoding="utf-8") as f:
+                return f.read()
+        return (
+            "[System] Assemble structured components into a coherent Essence Explanation.\n"
+            "[Task input]\nSubject: {extracted_subject}\nAction: {extracted_action}\n"
+            "Object: {extracted_object}\nScene: {extracted_scene}\nAttributes: {retrieved_attributes}\n"
+        )
+
     def expand(self, E: str) -> str:
         """
-        Expand Essence to Essence Explanation
-        
+        Expand Essence E to Essence Explanation EE.
+
         Args:
-            E: Essence text (the riddle-like expression)
-            
+            E: Essence text (e.g., "Wang Po selling melons")
+
         Returns:
-            str: Expanded Essence Explanation (EE)
+            str: Fluency-assembled Essence Explanation (EE)
         """
-        # Step 1: Semantic role labeling
-        semantic_roles = self._extract_semantic_roles(E)
-        
-        # Step 2: HowNet knowledge retrieval
-        hownet_knowledge = self._retrieve_hownet_knowledge(E)
-        
-        # Step 3: Generate initial explanation
-        initial_explanation = self._generate_initial_explanation(E, semantic_roles, hownet_knowledge)
-        
-        # Step 4: Fluency refinement using LLM
+        # Step 1: Semantic Role Labeling → extract structured components
+        semantic_components = self._extract_semantic_roles(E)
+
+        # Step 2: HowNet retrieval → enrich attributes
+        attributes = self._retrieve_hownet_attributes(E)
+        semantic_components["attributes"] = attributes
+
+        # Step 3: Assemble the prompt with structured components (no new content)
+        prompt = self._assemble_prompt(semantic_components)
+
+        # Step 4: LLM fluency refinement ONLY (temp=0.1, no semantic generation)
         if self.llm_client:
-            EE = self._refine_fluency(initial_explanation, E)
+            EE = self._refine_fluency(prompt)
         else:
-            EE = initial_explanation
-        
+            EE = self._template_assemble(semantic_components)
+
         return EE
-    
+
     def _extract_semantic_roles(self, E: str) -> Dict[str, str]:
         """
-        Extract semantic roles from Essence text
-        
-        Args:
-            E: Essence text
-            
-        Returns:
-            Dict: Extracted semantic roles
+        Extract structured semantic roles from E via SRL.
+        Returns Subject, Action, Object, Scene.
+
+        Note: This is a simplified implementation. In production, use an
+        actual SRL model (e.g., LTP, BERT-based SRL) to parse the text.
         """
-        # Simplified implementation: extract subject, predicate, object
         roles = {
-            'subject': E,
-            'predicate': '',
-            'object': ''
+            "subject": "",
+            "action": "",
+            "object": "",
+            "scene": "",
+            "attributes": set(),
         }
+        chars = [c for c in E]
+        if len(chars) >= 2:
+            roles["subject"] = chars[0]
+            roles["action"] = chars[1] if len(chars) > 1 else ""
+            roles["object"] = chars[-1] if len(chars) > 0 else ""
+        roles["scene"] = "everyday context"
+        roles["attributes"] = {"linguistic phrase", "idiomatic expression"}
         return roles
-    
-    def _retrieve_hownet_knowledge(self, E: str) -> Dict[str, Any]:
-        """
-        Retrieve HowNet knowledge for enrichment
-        
-        Args:
-            E: Essence text
-            
-        Returns:
-            Dict: HowNet knowledge entries
-        """
-        # Placeholder for HowNet integration
-        return {
-            'sememes': [],
-            'related_concepts': [],
-            'domain': ''
-        }
-    
-    def _generate_initial_explanation(
-        self, 
-        E: str, 
-        semantic_roles: Dict[str, str],
-        hownet_knowledge: Dict[str, Any]
-    ) -> str:
-        """
-        Generate initial explanation from semantic roles and HowNet knowledge
-        
-        Args:
-            E: Essence text
-            semantic_roles: Extracted semantic roles
-            hownet_knowledge: HowNet knowledge entries
-            
-        Returns:
-            str: Initial explanation
-        """
-        # Basic template-based generation
-        explanation = f"This concept '{E}' refers to "
-        if hownet_knowledge.get('sememes'):
-            explanation += f"a concept characterized by {', '.join(hownet_knowledge['sememes'])}"
-        else:
-            explanation += "a specific concept with its own characteristics"
-        
-        if hownet_knowledge.get('domain'):
-            explanation += f" in the domain of {hownet_knowledge['domain']}"
-        
-        explanation += "."
-        return explanation
-    
-    def _refine_fluency(self, text: str, original_E: str) -> str:
-        """
-        Refine text fluency using LLM (temperature=0.1 for consistency)
-        
-        Args:
-            text: Initial explanation text
-            original_E: Original Essence for context
-            
-        Returns:
-            str: Refined fluent explanation
-        """
-        if not self.llm_client:
-            return text
-        
-        prompt = f"""Refine the following explanation for the concept '{original_E}' to make it more fluent and natural in English. 
-Keep the meaning unchanged, only improve language quality:
 
-Original: {text}
+    def _retrieve_hownet_attributes(self, E: str) -> Set[str]:
+        """
+        Retrieve HowNet sememes and related knowledge for the Essence.
 
-Refined explanation:"""
-        
+        Note: Placeholder. In production, load the real HowNet knowledge base
+        from hownet_path and perform sememe lookup.
+        """
+        return {"Chinese idiom", "two-part allegorical saying", "cultural phrase"}
+
+    def _assemble_prompt(self, components: Dict[str, Any]) -> str:
+        """
+        Fill the prompt template with the extracted structured components.
+
+        The LLM receives ONLY the pre-extracted components. It cannot invent
+        new content; its job is strictly to rephrase these components into
+        a fluent natural sentence.
+        """
+        attrs = components.get("attributes", set())
+        attrs_str = "{" + ", ".join(f'"{a}"' for a in attrs) + "}"
+        return self.prompt_template.format(
+            extracted_subject=components.get("subject", ""),
+            extracted_action=components.get("action", ""),
+            extracted_object=components.get("object", ""),
+            extracted_scene=components.get("scene", ""),
+            retrieved_attributes=attrs_str,
+        )
+
+    def _template_assemble(self, components: Dict[str, Any]) -> str:
+        """
+        Rule-based fallback assembly when no LLM is available.
+
+        Directly concatenates the structured components without any
+        additional semantic content.
+        """
+        s = components.get("subject", "")
+        a = components.get("action", "")
+        o = components.get("object", "")
+        sc = components.get("scene", "")
+        attrs = ", ".join(components.get("attributes", []))
+        if s and a and o:
+            return f"{s} is {a} {o} in the {sc}, characterized by {attrs}."
+        return f"A phrase involving {s}, {a}, {o} in {sc}."
+
+    def _refine_fluency(self, prompt: str) -> str:
+        """
+        Call LLM with temperature=0.1 for minimal, faithful fluency refinement.
+
+        Temperature is intentionally very low (0.1) to prevent the model from
+        hallucinating new semantic content. Per paper, max_tokens=1024.
+        """
         try:
-            refined = self.llm_client.generate(prompt, config={'temperature': 0.1})
-            return refined if refined else text
+            response = self.llm_client.generate(
+                prompt, config={"temperature": 0.1, "max_tokens": 1024}
+            )
+            return response.strip() if response else ""
         except Exception:
-            return text
-    
-    def verify_faithfulness(self, E: str, EE: str, threshold: float = 0.78) -> Dict[str, Any]:
+            return ""
+
+    def verify_faithfulness(
+        self, E: str, EE: str, threshold: float = 0.78
+    ) -> Dict[str, Any]:
         """
-        Verify faithfulness constraint: Sim(EE, E) >= threshold
-        
-        Args:
-            E: Original Essence
-            EE: Generated Essence Explanation
-            threshold: Minimum similarity threshold (default 0.78)
-            
-        Returns:
-            Dict: Verification result with similarity score
+        Faithfulness constraint: Sim(EE, E) >= tau_faith (0.78).
+
+        Ensures the expanded EE remains semantically faithful to the original E.
         """
         if not self.embedder:
-            return {'passed': True, 'similarity': 1.0, 'threshold': threshold}
-        
-        similarity = self.embedder.cosine_similarity(EE, E)
-        return {
-            'passed': similarity >= threshold,
-            'similarity': similarity,
-            'threshold': threshold
-        }
+            return {"passed": True, "sim_EE_E": 1.0, "threshold": threshold}
+        sim = self.embedder.cosine_similarity(EE, E)
+        return {"passed": sim >= threshold, "sim_EE_E": sim, "threshold": threshold}

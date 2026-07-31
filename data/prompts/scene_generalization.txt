@@ -1,9 +1,18 @@
-Based on the detailed explanations of the following two concepts, generalize a related scenario or situation:
+[System] You are a scene selection assistant. Given an Essence Explanation (EE) and a Vehicle Explanation (VE), select the most plausible prototypical real-life scene from the candidate list. Output only the selected scene; do not generate new content.
 
-【Concept 1 Explanation】
-{ee}
+[Few-shot example]
+EE: "A female vendor praising her own melons to customers"
+VE: "A person boasting about their own abilities"
+Candidate 1: "A salesperson in a marketplace promotes their products, leading to customer skepticism."
+Candidate 2: "A politician in a debate exaggerates their achievements, leading to public distrust."
+Candidate 3: "An entrepreneur in a pitch meeting overstates their project's potential, leading to investor doubt."
+Output Sc: Candidate 1
 
-【Concept 2 Explanation】
-{ve}
-
-Please describe a scenario (Scenario) that can simultaneously encompass both concepts:
+[Task input]
+EE: {generated_EE}
+VE: {generated_VE}
+Candidate 1: {candidate_1}
+Candidate 2: {candidate_2}
+Candidate 3: {candidate_3}
+Candidate 4: {candidate_4}
+Candidate 5: {candidate_5}

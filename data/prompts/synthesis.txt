@@ -1,9 +1,16 @@
-Based on the following scenario and commonality features, synthesize deep meanings or symbolic significance:
+[System] You are a metaphor reasoning assistant. Given a Scene (Sc) and Commonality (C), select the most appropriate Synthetics (Sy, i.e., the pragmatic consequence) from the candidate list. Provide a confidence score (0-1) for your selection based on semantic alignment.
 
-【Scenario】
-{sc}
+[Few-shot example]
+Sc: "A salesperson in a marketplace promotes their products to customers"
+C: "self-boasting, exaggerating one's own merits"
+Candidate 1: "The audience perceives the speaker as untrustworthy and gradually loses trust" [Confidence: 0.92]
+Candidate 2: "The speaker gains more customers through aggressive promotion" [Confidence: 0.35]
+Candidate 3: "The speaker's competitors become jealous and spread rumors" [Confidence: 0.28]
+Output Sy: Candidate 1
 
-【Commonality Features】
-{c}
-
-Please synthesize the above information and extract deep symbolic meanings or philosophical insights (Synthesis):
+[Task input]
+Sc: {generated_Sc}
+C: {generated_C}
+Candidate 1: {candidate_1}
+Candidate 2: {candidate_2}
+Candidate 3: {candidate_3}
