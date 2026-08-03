@@ -43,56 +43,35 @@ class Synthesis:
         prompt_template: Loaded from data/prompts/synthesis.txt
     """
 
-    # Minimal rule base covering common pragmatic consequences.
-    # In production, rules_path loads the full 200–300 rule Appendix I-A set.
-    DEFAULT_RULE_BASE: List[Dict[str, Any]] = [
+    # Path to the complete 287-rule rule base (Appendix I-A)
+    RULE_BASE_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "data", "rule_base", "synthesis_rules.json"
+    )
+
+    # Minimal fallback rule base for when the full rule base is unavailable.
+    # In production, RULE_BASE_PATH loads the complete 287-rule set (Chinese).
+    FALLBACK_RULE_BASE: List[Dict[str, Any]] = [
         {
-            "id": "sy_rule_001",
-            "sy_text": "The audience perceives the speaker as untrustworthy and gradually loses trust",
-            "triggers": ["self-boast", "exaggerate", "overstate", "boasting", "exaggeration"],
-            "confidence_anchor": 0.92,
+            "id": "fallback_001",
+            "category": "自我吹嘘 / 自我美化",
+            "C_pattern": ["吹牛", "吹嘘", "自夸"],
+            "Sc_pattern": ["一个商人在集市推销产品，结果观众的怀疑。"],
+            "Sy": "观众会觉得说话者不可信，从而警惕。",
         },
         {
-            "id": "sy_rule_002",
-            "sy_text": "The audience recognizes a mismatch between claims and reality, leading to doubt",
-            "triggers": ["contrast", "discrepancy", "appearance", "reality", "pretend"],
-            "confidence_anchor": 0.85,
+            "id": "fallback_002",
+            "category": "盲目乐观 / 自我欺骗",
+            "C_pattern": ["自欺欺人", "掩耳盗铃", "痴心妄想"],
+            "Sc_pattern": ["一个经理在规划中回避现实，导致决策延迟。"],
+            "Sy": "听众会从中拓宽视野，进而重新考虑。",
         },
         {
-            "id": "sy_rule_003",
-            "sy_text": "The audience takes warning and avoids the same mistake in future situations",
-            "triggers": ["futile", "vain", "waste", "wrong method", "misguided"],
-            "confidence_anchor": 0.81,
-        },
-        {
-            "id": "sy_rule_004",
-            "sy_text": "The audience learns to broaden their perspective instead of staying narrow-minded",
-            "triggers": ["narrow", "small", "limited", "short-sighted", "isolated"],
-            "confidence_anchor": 0.88,
-        },
-        {
-            "id": "sy_rule_005",
-            "sy_text": "The audience detects a hidden malicious intent beneath a friendly surface",
-            "triggers": ["pretend", "friendly", "visit", "gift", "insincere", "hypocritical"],
-            "confidence_anchor": 0.90,
-        },
-        {
-            "id": "sy_rule_006",
-            "sy_text": "The speaker gains more customers through aggressive promotion",
-            "triggers": ["promotion", "optimistic", "confidence"],
-            "confidence_anchor": 0.35,
-        },
-        {
-            "id": "sy_rule_007",
-            "sy_text": "The speaker's competitors become jealous and spread rumors",
-            "triggers": ["competition", "rival", "marketplace"],
-            "confidence_anchor": 0.28,
-        },
-        {
-            "id": "sy_rule_008",
-            "sy_text": "The audience is advised to persist with correct methods rather than luck",
-            "triggers": ["wait", "luck", "chance", "coincidence", "passive"],
-            "confidence_anchor": 0.83,
+            "id": "fallback_003",
+            "category": "批评 / 指责",
+            "C_pattern": ["指责", "责备", "批评"],
+            "Sc_pattern": ["一个团队在会议上互相指责，引起信任流失。"],
+            "Sy": "人们意识到不一致，因此改进。",
         },
     ]
 
@@ -105,7 +84,8 @@ class Synthesis:
     ):
         self.llm_client = llm_client
         self.embedder = embedder
-        self.rules_path = rules_path
+        # Use provided path, or fall back to the default RULE_BASE_PATH
+        self.rules_path = rules_path or self.RULE_BASE_PATH
         self.confidence_threshold = confidence_threshold
         self.rule_base = self._load_rule_base()
         self.prompt_template = self._load_prompt_template()
@@ -115,15 +95,24 @@ class Synthesis:
     # ------------------------------------------------------------------
     def _load_rule_base(self) -> List[Dict[str, Any]]:
         """
-        Load the 200–300 rule base from rules_path, otherwise fall back to
-        the small default set above (for test/example runs only).
+        Load the 287-rule rule base (triple <C_pattern, Sc_pattern, Sy> format).
+        
+        If the full rule base file is available, load it.
+        Otherwise, fall back to the minimal FALLBACK_RULE_BASE for testing.
         """
         if self.rules_path and os.path.exists(self.rules_path):
             import json
-
-            with open(self.rules_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return list(self.DEFAULT_RULE_BASE)
+            try:
+                with open(self.rules_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                # Support both {rules: [...]} format and plain list format
+                if isinstance(data, dict) and "rules" in data:
+                    return data["rules"]
+                elif isinstance(data, list):
+                    return data
+            except (json.JSONDecodeError, IOError):
+                pass
+        return list(self.FALLBACK_RULE_BASE)
 
     def _load_prompt_template(self) -> str:
         if os.path.exists(PROMPT_FILE):
@@ -174,34 +163,69 @@ class Synthesis:
         """
         Retrieve top-k candidate Sy strings from the rule base.
 
-        Scoring is trigger-keyword overlap plus embedding similarity,
-        matching the paper description "Rule-base matching + embedding scoring".
+        Matching uses the triple <C_pattern, Sc_pattern, Sy> format:
+        1. C_pattern: keyword overlap between C and rule's C_pattern terms
+        2. Sc_pattern: embedding similarity between Sc and rule's Sc_pattern sentences
+           (Sc_pattern items are full sentences in the Chinese rule base)
+        3. Embedding similarity between candidate Sy and both Sc and C
+        4. Combined scoring: keyword + embedding
+
+        Scoring matches the paper: "Rule-base matching + embedding scoring"
         """
-        haystack = f"{Sc} {C}".lower()
         scored: List[Tuple[float, str]] = []
 
         for rule in self.rule_base:
-            # Keyword overlap with rule triggers
-            triggers = [t.lower() for t in rule.get("triggers", [])]
-            overlap = sum(1 for t in triggers if t in haystack)
-            anchor = rule.get("confidence_anchor", 0.5)
+            # C_pattern matching: keyword overlap (C_pattern = list of terms)
+            c_patterns = rule.get("C_pattern", [])
+            c_score = 0.0
+            if c_patterns:
+                c_lower = C.lower()
+                c_overlap = sum(1 for p in c_patterns if p.lower() in c_lower)
+                c_score = c_overlap / len(c_patterns)
 
-            # Optional embedding-based boost
-            embedding_boost = 0.0
-            if self.embedder:
-                sim_sc = self.embedder.cosine_similarity(rule["sy_text"], Sc)
-                sim_c = self.embedder.cosine_similarity(rule["sy_text"], C)
-                embedding_boost = 0.5 * sim_sc + 0.5 * sim_c
+            # Sc_pattern matching: embedding similarity (Sc_pattern = list of sentences)
+            sc_patterns = rule.get("Sc_pattern", [])
+            sc_score = 0.0
+            if sc_patterns and self.embedder:
+                # Use max embedding similarity between Sc and any Sc_pattern sentence
+                max_sc_sim = 0.0
+                for sc_sentence in sc_patterns:
+                    sim = self.embedder.cosine_similarity(Sc, sc_sentence)
+                    if sim > max_sc_sim:
+                        max_sc_sim = sim
+                sc_score = max_sc_sim
+            elif sc_patterns:
+                # No embedder: fallback to simple keyword overlap
+                sc_lower = Sc.lower()
+                sc_overlap = 0
+                for sc_sentence in sc_patterns:
+                    # Extract simple terms from the sentence for matching
+                    sc_terms = [t.strip() for t in sc_sentence.replace("，", " ").replace("。", " ").replace("、", " ").split() if t.strip()]
+                    if sc_terms:
+                        sc_overlap += sum(1 for t in sc_terms if t.lower() in sc_lower)
+                sc_score = sc_overlap / max(1, len(sc_patterns) * 5)  # normalize
 
-            score = 0.4 * (overlap / max(1, len(triggers))) + 0.2 * anchor + 0.4 * embedding_boost
-            scored.append((score, rule["sy_text"]))
+            # Sy embedding score: similarity between candidate Sy and both Sc and C
+            sy_text = rule.get("Sy", "")
+            sy_embedding_score = 0.0
+            if sy_text and self.embedder:
+                sim_sc = self.embedder.cosine_similarity(sy_text, Sc)
+                sim_c = self.embedder.cosine_similarity(sy_text, C)
+                sy_embedding_score = 0.5 * sim_sc + 0.5 * sim_c
 
+            # Combined score (weighted)
+            score = 0.25 * c_score + 0.25 * sc_score + 0.5 * sy_embedding_score
+            scored.append((score, sy_text))
+
+        # Sort by score descending
         scored.sort(key=lambda x: x[0], reverse=True)
-        selected = [text for _, text in scored[:top_k]]
+        selected = [text for _, text in scored[:top_k] if text]
 
-        # Safety pad if rule base is tiny
+        # Safety pad if rule base match didn't produce enough candidates
         while len(selected) < top_k:
-            selected.append(f"A reasonable pragmatic consequence given {C[:60]} and {Sc[:60]}.")
+            selected.append(
+                f"给定共性='{C[:30]}'和场景='{Sc[:30]}'，合理的语用后果是相关的。"
+            )
         return selected[:top_k]
 
     # ------------------------------------------------------------------
@@ -256,24 +280,33 @@ class Synthesis:
     @staticmethod
     def _parse_sy_output(response: str) -> Tuple[int, float]:
         """
-        Parse LLM output:
+        Parse LLM output (supports both English and Chinese formats):
             "Output Sy: Candidate 1"   → (1, 1.0)
             "Candidate 2  [Confidence: 0.88]" → (2, 0.88)
+            "候选1  [置信度: 0.92]" → (1, 0.92)
             "3"  → (3, 0.5)
         """
         idx = -1
         confidence = 0.5
 
+        # Try English format first
         cand_match = re.search(r"Candidate\s*(\d+)", response, flags=re.IGNORECASE)
         if cand_match:
             idx = int(cand_match.group(1))
         else:
-            digits = re.findall(r"\d+", response)
-            if digits:
-                idx = int(digits[0])
+            # Try Chinese format: 候选1, 候选 2, etc.
+            cn_match = re.search(r"候选\s*(\d+)", response)
+            if cn_match:
+                idx = int(cn_match.group(1))
+            else:
+                # Try generic digit
+                digits = re.findall(r"\d+", response)
+                if digits:
+                    idx = int(digits[0])
 
+        # Try English confidence format
         conf_match = re.search(
-            r"(?:Confidence|Score|置信度|score)[:\s]*([01](?:\.\d+)?)",
+            r"(?:Confidence|Score|score)[:\s]*([01](?:\.\d+)?)",
             response,
             flags=re.IGNORECASE,
         )
@@ -283,13 +316,25 @@ class Synthesis:
             except ValueError:
                 confidence = 0.5
         else:
-            # Square-bracket style: "[Confidence: 0.92]" as in paper template
-            bracketed = re.findall(r"\[Confidence[:\s]*([01](?:\.\d+)?)\]", response, flags=re.IGNORECASE)
-            if bracketed:
+            # Try Chinese confidence format: 置信度
+            cn_conf = re.search(r"置信度[:\s]*([01](?:\.\d+)?)", response)
+            if cn_conf:
                 try:
-                    confidence = float(bracketed[-1])
+                    confidence = float(cn_conf.group(1))
                 except ValueError:
                     confidence = 0.5
+            else:
+                # Square-bracket style: "[Confidence: 0.92]" or "[置信度: 0.92]"
+                bracketed = re.findall(
+                    r"\[(?:Confidence|置信度)[:\s]*([01](?:\.\d+)?)\]",
+                    response,
+                    flags=re.IGNORECASE,
+                )
+                if bracketed:
+                    try:
+                        confidence = float(bracketed[-1])
+                    except ValueError:
+                        confidence = 0.5
         return idx, confidence
 
     # ------------------------------------------------------------------

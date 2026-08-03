@@ -1,17 +1,17 @@
-[System] You are a text refinement assistant. Given the structured semantic components extracted from an Essence (E), assemble them into a coherent, fluent Essence Explanation (EE). Do not add new semantic content; only improve fluency and readability.
+【系统】您是文本细化助手。给定从本质（E）中提取的结构化语义组件，将它们组装成连贯、流畅的本质解释（EE）。不添加新的语义内容；只会提高流畅性和可读性。
 
-[Few-shot example]
-Input structured components:
-  Subject: "Wang Po"
-  Action: "selling melons"
-  Object: "melons"
-  Scene: "marketplace"
-  Attributes: {"vendor", "elderly female", "commercial transaction", "promotion"}
-Output EE: "A female vendor named Wang Po is selling melons in the market, constantly praising how good her melons are to customers."
+[少数镜头示例]
+输入结构化组件：
+主题：“王”
+行动：“卖瓜”
+对象：“甜瓜”
+场景：“市场”
+属性：{“卖家”、“老年女性”、“商业交易”、“促销”}
+输出EE：“一位名叫王波的女摊贩在市场上卖瓜，不断称赞她的瓜对顾客有多好。”
 
-[Task input]
-Subject: {extracted_subject}
-Action: {extracted_action}
-Object: {extracted_object}
-Scene: {extracted_scene}
-Attributes: {retrieved_attributes}
+[任务输入]
+主题：{extracted_Subject}
+操作：｛extracted_Action｝
+对象：{extracted_Object}
+场景：{extracted_Scene}
+属性：｛retrieved_Attributes｝

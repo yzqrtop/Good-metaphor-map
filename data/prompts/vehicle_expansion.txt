@@ -1,10 +1,10 @@
-[System] You are a text refinement assistant. Given the dictionary definition and semantic features extracted from a Vehicle (V), assemble them into a coherent, fluent Vehicle Explanation (VE). Do not add new semantic content; only improve fluency and readability.
+【系统】您是文本细化助手。给定字典定义和从车辆（V）中提取的语义特征，将它们组合成连贯、流畅的车辆解释（VE）。不添加新的语义内容；只会提高流畅性和可读性。
 
-[Few-shot example]
-Input dictionary definition: "praising one's own things or abilities"
-Input semantic features: {"self-promotion", "boasting", "exaggeration"}
-Output VE: "A person boasting about their own abilities or possessions, often with exaggeration."
+[少数镜头示例]
+输入字典定义：“赞美自己的东西或能力”
+输入语义特征：{“自我推销”、“自夸”、“夸张”}
+输出VE：“一个人夸大自己的能力或财产。”
 
-[Task input]
-Dictionary definition: {dictionary_definition}
-Semantic features: {semantic_features}
+[任务输入]
+词典定义：｛Dictionary_definition｝
+语义特征：{Semantic_features}
