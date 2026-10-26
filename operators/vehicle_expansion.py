@@ -1,156 +1,126 @@
 """
 Φ_VE Operator: Vehicle Explanation (V → VE)
 
-Expands V (Vehicle) into Vehicle Explanation via:
-1. Dictionary definition lookup (Xinhua Dictionary of TAS)
-2. HowNet sememe retrieval for semantic features
-3. Fluency refinement ONLY using LLM (temp=0.1)
+Pipeline (paper, Appendix E, Operator 2):
+    1. Dictionary lookup    → standard interpretation of V (Xinhua glosses)
+    2. HowNet sememe fetch  → explicit semantic features of V
+    3. Rule-based assembly  → literal VE composed from definition + features
+    4. Fluency refinement   → LLM at temperature=0.1, max_tokens=1024
 
-Important: The LLM does NOT generate new semantic content. It only assembles
-the pre-extracted dictionary definition and semantic features into a sentence.
+VE must stay literal: it interprets V "literally for comparison" with EE and
+must not import the figurative content of E.
 """
 
-from typing import Optional, Dict, Any, List, Set
 import os
-from ..models.llm_wrappers import BaseLLM
-from ..embeddings import JinaEmbedder
+from typing import Any, Dict, List, Optional
 
+from core.knowledge_base import HowNetKB
+from core.tokenizer import ChineseTokenizer
+from embeddings.jina_embedder import JinaEmbedder
+from llm_wrappers import BaseLLM, GenerationConfig
 
 PROMPT_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "data", "prompts", "vehicle_expansion.txt"
+    "data", "prompts", "vehicle_expansion.txt",
 )
+
+# Sememe → explicit behavioural consequence, used to make VE self-contained.
+SEMEME_CONSEQUENCE = {
+    "夸大": "夸大其词而不顾客观现实",
+    "失真": "与客观情况不相符",
+    "自夸": "反复肯定自己",
+    "称赞": "对人或事物给予肯定评价",
+    "推销": "向他人推介以促成接受",
+    "不信任": "对他人心存疑虑",
+    "警告": "提醒他人防备后患",
+}
 
 
 class VehicleExpansion:
-    """
-    Vehicle Explanation Operator (Φ_VE: V → L)
-
-    Pipeline:
-        Dict definition → HowNet sememes → structured inputs → LLM fluency assembly
-
-    Attributes:
-        llm_client: LLM used ONLY for fluency refinement (temp=0.1)
-        embedder: Jina embedder for faithfulness constraint verification
-        dictionary_path: Path to TAS dictionary resource
-        hownet_path: Path to HowNet knowledge base
-        prompt_template: Loaded from data/prompts/vehicle_expansion.txt
-    """
+    """Vehicle Explanation Operator (Φ_VE: V → L)."""
 
     def __init__(
         self,
         llm_client: Optional[BaseLLM] = None,
         embedder: Optional[JinaEmbedder] = None,
-        dictionary_path: Optional[str] = None,
-        hownet_path: Optional[str] = None,
+        kb: Optional[HowNetKB] = None,
     ):
         self.llm_client = llm_client
         self.embedder = embedder
-        self.dictionary_path = dictionary_path
-        self.hownet_path = hownet_path
+        self.kb = kb or HowNetKB()
+        self.tokenizer: ChineseTokenizer = self.kb.build_tokenizer()
         self.prompt_template = self._load_prompt_template()
 
     def _load_prompt_template(self) -> str:
         if os.path.exists(PROMPT_FILE):
             with open(PROMPT_FILE, "r", encoding="utf-8") as f:
                 return f.read()
-        return (
-            "[System] Assemble definition + features into coherent VE.\n"
-            "[Task input]\nDictionary definition: {dictionary_definition}\n"
-            "Semantic features: {semantic_features}\n"
-        )
+        raise FileNotFoundError(f"Prompt template not found: {PROMPT_FILE}")
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
     def expand(self, V: str) -> str:
-        """
-        Expand Vehicle V to Vehicle Explanation VE.
-
-        Args:
-            V: Vehicle text (literal explanation, e.g., "praising one's own things")
-
-        Returns:
-            str: Fluency-assembled Vehicle Explanation (VE)
-        """
-        # Step 1: Look up dictionary definition (no LLM)
         definition = self._lookup_dictionary_definition(V)
-
-        # Step 2: Retrieve HowNet semantic features
-        semantic_features = self._retrieve_hownet_sememes(V)
-
-        # Step 3: Assemble prompt with pre-extracted content only
-        prompt = self._assemble_prompt(definition, semantic_features)
-
-        # Step 4: LLM fluency refinement ONLY (temp=0.1, no generation)
+        features = self._retrieve_hownet_sememes(V)
+        components = {
+            "vehicle": V,
+            "definition": definition,
+            "features": "、".join(features),
+        }
         if self.llm_client:
-            VE = self._refine_fluency(prompt)
-        else:
-            VE = self._template_assemble(definition, semantic_features)
+            prompt = self.prompt_template.format(
+                definition=components["definition"],
+                semantic_features=components["features"],
+            )
+            refined = self._refine_fluency(prompt)
+            if refined:
+                return refined
+        return self._template_assemble(components)
 
-        return VE
-
+    # ------------------------------------------------------------------
+    # Step 1 — dictionary lookup
+    # ------------------------------------------------------------------
     def _lookup_dictionary_definition(self, V: str) -> str:
-        """
-        Look up V in the Xinhua Dictionary of Two-Part Allegorical Sayings (TAS).
+        tokens = [t for t in self.tokenizer.tokenize(V) if t not in self.kb.stopwords]
+        glosses: List[str] = []
+        for token in tokens:
+            gloss = self.kb.gloss(token)
+            if gloss and gloss not in glosses:
+                glosses.append(gloss)
 
-        Note: Placeholder. In production, load the real dictionary from
-        dictionary_path and perform the lookup.
-        """
-        return f"The literal meaning or pragmatic usage associated with '{V}'"
+        if not glosses:
+            return f"字面意思为“{V}”"
+        # In Chinese coordinate compounds the semantic head is the final item
+        # ("自我推销和自夸" → 自夸), so its gloss defines V.
+        return glosses[-1] if len(glosses) > 1 else glosses[0]
 
-    def _retrieve_hownet_sememes(self, V: str) -> Set[str]:
-        """
-        Retrieve HowNet sememes (semantic features) for the Vehicle V.
+    # ------------------------------------------------------------------
+    # Step 2 — HowNet semantic features
+    # ------------------------------------------------------------------
+    def _retrieve_hownet_sememes(self, V: str) -> List[str]:
+        tokens = [t for t in self.tokenizer.tokenize(V) if t not in self.kb.stopwords]
+        return self.kb.sememes_of(tokens)
 
-        Note: Placeholder. In production, load the real HowNet knowledge base
-        from hownet_path and perform sememe lookup.
-        """
-        return {"idiomatic meaning", "pragmatic interpretation", "cultural connotation"}
-
-    def _assemble_prompt(self, definition: str, features: Set[str]) -> str:
-        """
-        Fill the prompt template with pre-extracted definition and features.
-
-        The LLM receives ONLY these two inputs. It cannot invent new features
-        or redefine the meaning.
-        """
-        features_str = "{" + ", ".join(f'"{f}"' for f in features) + "}"
-        return self.prompt_template.format(
-            dictionary_definition=definition,
-            semantic_features=features_str,
-        )
-
-    def _template_assemble(self, definition: str, features: Set[str]) -> str:
-        """
-        Rule-based fallback when LLM is unavailable. Simply joins the
-        definition with a semicolon-list of features, no extra content.
-        """
-        if features:
-            feature_list = ", ".join(sorted(features))
-            return f"{definition}. Key semantic features include: {feature_list}."
-        return f"{definition}."
+    # ------------------------------------------------------------------
+    # Step 3 — assembly
+    # ------------------------------------------------------------------
+    def _template_assemble(self, components: Dict[str, Any]) -> str:
+        definition = components["definition"]
+        clause = f"{components['vehicle']}，指{definition}"
+        consequences = [
+            text for sememe, text in SEMEME_CONSEQUENCE.items()
+            if sememe in components["features"] and text not in clause
+        ]
+        if consequences:
+            clause += "，" + consequences[0]
+        return clause.rstrip("。") + "。"
 
     def _refine_fluency(self, prompt: str) -> str:
-        """
-        Call LLM with temperature=0.1 for minimal, faithful fluency refinement.
-
-        Matches the paper: Φ_VE uses temp=0.1, max_tokens=1024.
-        """
         try:
             response = self.llm_client.generate(
-                prompt, config={"temperature": 0.1, "max_tokens": 1024}
+                prompt, config=GenerationConfig(temperature=0.1, max_tokens=1024)
             )
-            return response.strip() if response else ""
+            return (response or "").strip()
         except Exception:
             return ""
-
-    def verify_faithfulness(
-        self, V: str, VE: str, threshold: float = 0.78
-    ) -> Dict[str, Any]:
-        """
-        Faithfulness constraint: Sim(VE, V) >= tau_faith (0.78).
-
-        Ensures VE remains semantically faithful to the original Vehicle V.
-        """
-        if not self.embedder:
-            return {"passed": True, "sim_VE_V": 1.0, "threshold": threshold}
-        sim = self.embedder.cosine_similarity(VE, V)
-        return {"passed": sim >= threshold, "sim_VE_V": sim, "threshold": threshold}

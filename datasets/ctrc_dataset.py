@@ -139,8 +139,8 @@ class CTRCDataset:
                 hard_count += 1
         
         return {
-            'total_paragraphs': 75296,
-            'candidates_per_instance': 4,
+            'total_paragraphs': len(self._data),
+            'candidates_per_instance': len(self._data[0].get('candidates', [])) if self._data else 0,
             'splits': splits,
             'hard_subset_size': hard_count,
             'usage': 'evaluation only (no re-annotation)'

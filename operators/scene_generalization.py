@@ -1,288 +1,218 @@
 """
 Φ_Sc Operator: Scene Generalization (EE × VE → Sc)
 
-Generates Scene (Sc) from EE and VE via:
-1. Template-based candidate generation → 3–5 candidate scenes (Appendix I-A.1)
-2. LLM selection ONLY (Qwen2.5-7B) — the model DOES NOT generate new scenes,
-   it only selects the best candidate from the pre-generated list
-3. Embedding similarity verification
+Pipeline (paper, Appendix E, Operator 4):
+    1. Candidate generation — template instantiations of
+       "A [subject] in [situation] [acts], leading to [consequence]."
+       filled from the EE/VE slots (no LLM generation)
+    2. Selection — Qwen2.5-7B selects one candidate, selection only
+       (temperature=0.7, max_tokens=1024)
+    3. Verification — the selected scene is compared with EE and VE against
+       τ_common; if it fails, the next-best candidate is selected
 
-Important: The LLM is a SELECTOR, not a GENERATOR. Per paper:
-"Candidate scenes are pre-generated via template instantiation;
-the LLM selects the most plausible one."
+Scenes stay *concrete but domain-general*: the specific market stall is lifted
+into a class of situations while keeping the audience reaction explicit, which
+is what Sy later consumes.
 """
 
-from typing import Optional, Dict, Any, List
+import hashlib
 import os
 import re
-from ..models.llm_wrappers import BaseLLM
-from ..embeddings import JinaEmbedder
+from typing import Any, Dict, List, Optional
 
+from constraints.verifier import ConstraintVerifier
+from core.knowledge_base import HowNetKB
+from core.tokenizer import ChineseTokenizer
+from embeddings.jina_embedder import JinaEmbedder
+from llm_wrappers import BaseLLM, GenerationConfig
 
 PROMPT_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "data", "prompts", "scene_generalization.txt"
+    "data", "prompts", "scene_generalization.txt",
 )
+
+# Audience reaction per domain: commercial scenes address 顾客, public speech 听众.
+AUDIENCE_BY_DOMAIN = {
+    "commercial": ("顾客", ["怀疑", "不信任", "犹豫", "观望"]),
+    "public": ("听众", ["不信任", "质疑", "反感", "保留"]),
+    "workplace": ("同事", ["质疑", "保留", "观望", "不满"]),
+}
+
+TEMPLATES = [
+    "{role}在{place}不断{action}自己的{item}，结果引起{reaction}。",
+    "一位{role}在{place}上{action}自家{item}，最终导致{reaction}。",
+    "某位{role}在{place}中{action}自己的{item}，使得{reaction}。",
+    "{role}在{place}向{audience}{action}自己的{item}，随后出现{reaction}。",
+    "一名{role}在{place}把{item}{action}得过头，换来{reaction}。",
+]
 
 
 class SceneGeneralization:
-    """
-    Scene Generalization Operator (Φ_Sc: L×L → Sc)
-
-    Pipeline:
-        3–5 template candidates → LLM selection (only picks Candidate N) → embedding verify
-
-    Attributes:
-        llm_client: LLM used ONLY for selection (NOT generation), e.g. Qwen2.5-7B
-        embedder: Jina embedder for final similarity verification & fallback
-        num_candidates: 3, 4, or 5 candidate scenes (paper: 3–5)
-        prompt_template: Loaded from data/prompts/scene_generalization.txt
-    """
-
-    # Template instantiation for candidate scene generation.
-    # These correspond to Appendix I-A.1 in the paper.
-    # Each template is parameterized by EE topics and VE aspects.
-    SCENE_TEMPLATES: List[str] = [
-        "A {role} in a {place} context {action_promotes} {items}, leading to {audience_reaction}.",
-        "A {persona} in a {setting} {action_exaggerates} their {merits}, leading to {outcome}.",
-        "An {actor} during a {situation} {action_overstates} the {potential}, leading to {consequence}.",
-        "A {protagonist} within a {domain} {action_boasts} about their {achievements}, leading to {result}.",
-        "Someone in a {scenario} {action_claims} {attributes_or_claims}, leading to {reception}.",
-    ]
-
-    ROLE_VOCAB = ["salesperson", "politician", "entrepreneur", "job seeker", "candidate", "speaker", "advocate"]
-    PLACE_VOCAB = ["marketplace", "debate stage", "pitch meeting", "job interview", "public speech", "negotiation"]
-    PERSONA_VOCAB = ["politician", "manager", "presenter", "salesperson", "candidate", "applicant", "leader"]
-    SETTING_VOCAB = ["debate", "team meeting", "town hall", "interview", "press conference", "boardroom"]
-    ACTOR_VOCAB = ["entrepreneur", "startup founder", "project lead", "applicant", "proponent", "negotiator"]
-    SITUATION_VOCAB = ["pitch meeting", "fundraising round", "product launch", "grant proposal", "investment round"]
-    PROTAGONIST_VOCAB = ["candidate", "manager", "executive", "influencer", "sales leader", "consultant"]
-    DOMAIN_VOCAB = ["election campaign", "corporate review", "social media", "client pitch", "panel discussion"]
-    SCENARIO_VOCAB = [
-        "commercial setting", "social gathering", "professional environment",
-        "recruitment context", "public discourse", "negotiation table",
-    ]
-    ACTIONS_PROMOTE = [
-        "promotes their", "endorses their", "markets their", "advertises their", "talks up their",
-    ]
-    ACTIONS_EXAGGERATE = [
-        "exaggerates", "inflates", "overstates", "embellishes", "overemphasizes",
-    ]
-    ACTIONS_OVERSTATE = [
-        "overstates", "overestimates", "inflates", "magnifies", "exaggerates",
-    ]
-    ACTIONS_BOASTS = [
-        "boasts", "brags", "flaunts", "shows off", "trumpets",
-    ]
-    ACTIONS_CLAIMS = [
-        "exaggeratedly claims", "boastfully asserts", "overconfidently proclaims", "inflatedly states",
-    ]
-    ITEMS_VOCAB = ["products", "services", "offerings", "proposals", "ideas", "credentials"]
-    MERITS_VOCAB = [
-        "own achievements", "personal strengths", "past successes", "track record", "capabilities",
-    ]
-    POTENTIAL_VOCAB = [
-        "project's potential", "venture's upside", "initiative's impact", "plan's effectiveness", "proposal's value",
-    ]
-    ACHIEVEMENTS_VOCAB = [
-        "past wins", "prior outcomes", "key accomplishments", "deliverables", "performance record",
-    ]
-    ATTRIBS_VOCAB = [
-        "excessive advantages", "overstated qualifications", "inflated benefits", "unrealistic strengths",
-    ]
-    AUDIENCE_REACT = [
-        "skepticism from the audience", "distrust among observers", "doubt in onlookers",
-        "hesitation from stakeholders", "reservations from listeners",
-    ]
-    OUTCOMES = [
-        "public distrust", "audience disbelief", "counterparty pushback", "hesitant buy-in",
-    ]
-    CONSEQUENCES = [
-        "investor doubt", "stakeholder skepticism", "low acceptance", "reduced buy-in",
-    ]
-    RESULTS = [
-        "audience skepticism", "reduced trust", "perception of overclaiming", "pushback from peers",
-    ]
-    RECEPTIONS = [
-        "audience distrust", "listener skepticism", "recipient reluctance", "observer doubt",
-    ]
+    """Scene Generalization Operator (Φ_Sc: L × L → Sc)."""
 
     def __init__(
         self,
         llm_client: Optional[BaseLLM] = None,
         embedder: Optional[JinaEmbedder] = None,
-        num_candidates: int = 5,
+        kb: Optional[HowNetKB] = None,
+        num_candidates: int = 3,
     ):
-        assert 3 <= num_candidates <= 5, "num_candidates must be between 3 and 5"
         self.llm_client = llm_client
         self.embedder = embedder
-        self.num_candidates = num_candidates
+        self.kb = kb or HowNetKB()
+        self.tokenizer: ChineseTokenizer = self.kb.build_tokenizer()
+        self.num_candidates = max(3, min(num_candidates, 5))
         self.prompt_template = self._load_prompt_template()
+        self.last_selection: Dict[str, Any] = {}
 
     def _load_prompt_template(self) -> str:
         if os.path.exists(PROMPT_FILE):
             with open(PROMPT_FILE, "r", encoding="utf-8") as f:
                 return f.read()
-        return (
-            "[System] Select the most plausible scene from candidates.\n"
-            "[Task input]\nEE: {generated_EE}\nVE: {generated_VE}\n"
-            "Candidate 1: {candidate_1}\nCandidate 2: {candidate_2}\nCandidate 3: {candidate_3}\n"
-            "Candidate 4: {candidate_4}\nCandidate 5: {candidate_5}\n"
-        )
+        raise FileNotFoundError(f"Prompt template not found: {PROMPT_FILE}")
+
+    # ------------------------------------------------------------------
+    # Step 1 — slot filling and candidate generation
+    # ------------------------------------------------------------------
+    def _slot_values(self, EE: str, VE: str) -> Dict[str, str]:
+        tokens = [
+            token for token in self.tokenizer.tokenize(f"{EE} {VE}")
+            if token not in self.kb.stopwords
+        ]
+        tokens = list(dict.fromkeys(tokens))
+        sememes = set(self.kb.sememes_of(tokens))
+
+        commercial = bool({"交易", "市场", "商品", "商贩"} & sememes)
+        public = bool({"政治", "竞选", "演讲", "听众"} & sememes)
+
+        if public:
+            role, place, domain = "政客", "辩论台", "public"
+        elif commercial:
+            role, place, domain = "销售人员", "集市", "commercial"
+        else:
+            role, place, domain = "说话者", "公开场合", "workplace"
+
+        if "自夸" in sememes or "夸耀" in sememes:
+            action = "吹嘘"
+        elif "推销" in sememes:
+            action = "推销"
+        else:
+            action = "宣传"
+
+        item = "产品" if commercial else "自身能力"
+        audience, reactions = AUDIENCE_BY_DOMAIN[domain]
+        reaction = f"{audience}的{reactions[0]}"
+
+        return {
+            "role": role, "place": place, "action": action, "item": item,
+            "audience": audience, "reaction": reaction, "domain": domain,
+        }
+
+    def _generate_candidates(self, EE: str, VE: str) -> List[str]:
+        slots = self._slot_values(EE, VE)
+        seed = int(hashlib.md5(f"{EE}|{VE}".encode("utf-8")).hexdigest()[:8], 16)
+        candidates: List[str] = []
+        for offset in range(self.num_candidates):
+            template = TEMPLATES[(seed + offset) % len(TEMPLATES)]
+            candidate = template.format(**slots)
+            if candidate not in candidates:
+                candidates.append(candidate)
+        return candidates
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def generalize(self, EE: str, VE: str) -> str:
-        """
-        Generalize Scene Sc from EE, VE using:
-            candidate templates → LLM SELECTION → embedding verification/fallback
-        """
-        # Step 1. Pre-generate 3-5 candidate scenes (template instantiation only, no LLM)
-        candidates = self._generate_candidates_via_templates(EE, VE)
-        assert len(candidates) == self.num_candidates, (
-            f"Expected {self.num_candidates} candidates, got {len(candidates)}"
-        )
+    def generalize(self, EE: str, VE: str, C: Optional[str] = None) -> str:
+        candidates = self._generate_candidates(EE, VE)
+        ranked = self._rank_candidates(EE, VE, C or "", candidates)
 
-        # Step 2. LLM selects ONE candidate (Candidate 1..5). It DOES NOT generate.
+        preferred: List[str] = []
         if self.llm_client:
-            Sc = self._select_candidate_via_llm(candidates, EE, VE)
-        else:
-            # If no LLM, fall back to embedding-similarity selection
-            Sc = self._select_candidate_via_embeddings(candidates, EE, VE)
+            chosen = self._select_with_llm(EE, VE, C or "", candidates)
+            if chosen:
+                preferred.append(chosen)
 
-        # Step 3. Embedding verification; fall back if the scene doesn't align
-        if self.embedder:
-            verified = self._verify_scene_alignment(Sc, EE, VE)
-            if not verified["passed"]:
-                Sc = self._select_candidate_via_embeddings(candidates, EE, VE)
+        # LLM choice first, then embedding order; skip candidates that fail
+        # the τ_common check against EE and VE (Appendix E, step 3).
+        order = preferred + [c for c in ranked if c not in preferred]
+        threshold = self._tau_common()
+        for candidate in order:
+            check = self._verify(candidate, EE, VE, threshold)
+            if check["passed"]:
+                self.last_selection = {"scene": candidate, "verified": True, **check}
+                return candidate
 
-        return Sc
-
-    # ------------------------------------------------------------------
-    # Step 1 — template instantiation (Appendix I-A.1)
-    # ------------------------------------------------------------------
-    def _generate_candidates_via_templates(self, EE: str, VE: str) -> List[str]:
-        """
-        Deterministically instantiate self.num_candidates scene templates.
-        This produces the candidate pool; the LLM only selects from them.
-        """
-        import random
-
-        rng = random.Random(hash((EE, VE, self.num_candidates)) % (2**31))
-        candidates: List[str] = []
-        for i in range(self.num_candidates):
-            template = self.SCENE_TEMPLATES[i % len(self.SCENE_TEMPLATES)]
-            candidate = template.format(
-                role=rng.choice(self.ROLE_VOCAB),
-                place=rng.choice(self.PLACE_VOCAB),
-                action_promotes=rng.choice(self.ACTIONS_PROMOTE),
-                items=rng.choice(self.ITEMS_VOCAB),
-                audience_reaction=rng.choice(self.AUDIENCE_REACT),
-                persona=rng.choice(self.PERSONA_VOCAB),
-                setting=rng.choice(self.SETTING_VOCAB),
-                action_exaggerates=rng.choice(self.ACTIONS_EXAGGERATE),
-                merits=rng.choice(self.MERITS_VOCAB),
-                outcome=rng.choice(self.OUTCOMES),
-                actor=rng.choice(self.ACTOR_VOCAB),
-                situation=rng.choice(self.SITUATION_VOCAB),
-                action_overstates=rng.choice(self.ACTIONS_OVERSTATE),
-                potential=rng.choice(self.POTENTIAL_VOCAB),
-                consequence=rng.choice(self.CONSEQUENCES),
-                protagonist=rng.choice(self.PROTAGONIST_VOCAB),
-                domain=rng.choice(self.DOMAIN_VOCAB),
-                action_boasts=rng.choice(self.ACTIONS_BOASTS),
-                achievements=rng.choice(self.ACHIEVEMENTS_VOCAB),
-                result=rng.choice(self.RESULTS),
-                scenario=rng.choice(self.SCENARIO_VOCAB),
-                action_claims=rng.choice(self.ACTIONS_CLAIMS),
-                attributes_or_claims=rng.choice(self.ATTRIBS_VOCAB),
-                reception=rng.choice(self.RECEPTIONS),
-            )
-            candidates.append(candidate.capitalize())
-        return candidates
-
-    # ------------------------------------------------------------------
-    # Step 2 — LLM selection (selection only, no generation)
-    # ------------------------------------------------------------------
-    def _select_candidate_via_llm(
-        self, candidates: List[str], EE: str, VE: str
-    ) -> str:
-        """
-        Call LLM to pick the best candidate.
-
-        Per paper template, LLM output is exactly one of:
-            "Candidate 1", "Candidate 2", ..., "Candidate 5"
-        """
-        prompt_kwargs = {
-            "generated_EE": EE,
-            "generated_VE": VE,
+        selected = order[0] if order else ""
+        self.last_selection = {
+            "scene": selected,
+            "verified": False,
+            "threshold": threshold,
+            "reason": "no candidate passed tau_common; returned top-ranked",
         }
-        for idx in range(1, 6):
-            key = f"candidate_{idx}"
-            prompt_kwargs[key] = candidates[idx - 1] if idx <= len(candidates) else ""
+        return selected
 
-        prompt = self.prompt_template.format(**prompt_kwargs)
-
-        try:
-            # Selection tasks: temperature near 0 for deterministic choice, max_tokens small
-            response = self.llm_client.generate(
-                prompt, config={"temperature": 0.7, "max_tokens": 1024}
-            )
-            selection = self._parse_candidate_selection(response)
-            if 1 <= selection <= len(candidates):
-                return candidates[selection - 1]
-        except Exception:
-            pass
-        # LLM failed → embedding fallback
-        return self._select_candidate_via_embeddings(candidates, EE, VE)
-
-    @staticmethod
-    def _parse_candidate_selection(response: str) -> int:
-        """
-        Parse LLM output expecting "Candidate N".
-        Covers: "Candidate 1", "Output Sc: Candidate 2", plain "3", etc.
-        """
-        match = re.search(r"Candidate\s*(\d+)", response, flags=re.IGNORECASE)
-        if match:
-            return int(match.group(1))
-        digits = re.findall(r"\d+", response)
-        if digits:
-            return int(digits[0])
-        return -1
-
-    # ------------------------------------------------------------------
-    # Fallback — embedding-based selection (no LLM)
-    # ------------------------------------------------------------------
-    def _select_candidate_via_embeddings(
-        self, candidates: List[str], EE: str, VE: str
-    ) -> str:
+    def _tau_common(self) -> Optional[float]:
         if not self.embedder:
-            return candidates[0]
-        best_score, best = -1.0, candidates[0]
-        for cand in candidates:
-            sim_ee = self.embedder.cosine_similarity(cand, EE)
-            sim_ve = self.embedder.cosine_similarity(cand, VE)
-            score = 0.5 * sim_ee + 0.5 * sim_ve
-            if score > best_score:
-                best_score, best = score, cand
-        return best
+            return None
+        return ConstraintVerifier(self.embedder).thresholds["commonality"]
 
-    # ------------------------------------------------------------------
-    # Step 3 — embedding verification
-    # ------------------------------------------------------------------
-    def _verify_scene_alignment(
-        self, Sc: str, EE: str, VE: str
+    def _verify(
+        self, candidate: str, EE: str, VE: str, threshold: Optional[float]
     ) -> Dict[str, Any]:
-        if not self.embedder:
-            return {"passed": True}
-        sim_e = self.embedder.cosine_similarity(Sc, EE)
-        sim_v = self.embedder.cosine_similarity(Sc, VE)
-        # Reasonable (non-calibrated) check; the official 4 constraints live
-        # in constraints/verifier.py. This is a local sanity gate.
-        threshold = 0.3
+        if not self.embedder or threshold is None:
+            return {"passed": True, "sim_Sc_EE": None, "sim_Sc_VE": None}
+        sim_ee = self.embedder.cosine_similarity(candidate, EE)
+        sim_ve = self.embedder.cosine_similarity(candidate, VE)
         return {
-            "passed": sim_e >= threshold and sim_v >= threshold,
-            "sim_Sc_EE": sim_e,
-            "sim_Sc_VE": sim_v,
+            "passed": sim_ee >= threshold and sim_ve >= threshold,
+            "sim_Sc_EE": sim_ee,
+            "sim_Sc_VE": sim_ve,
+            "threshold": threshold,
         }
+
+    def _rank_candidates(
+        self, EE: str, VE: str, C: str, candidates: List[str]
+    ) -> List[str]:
+        if not self.embedder or not candidates:
+            return list(candidates)
+        contexts = [text for text in (C, EE, VE) if text]
+        scored = []
+        for candidate in candidates:
+            score = sum(self.embedder.cosine_similarity(candidate, ctx) for ctx in contexts)
+            scored.append((score / max(len(contexts), 1), candidate))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [candidate for _, candidate in scored]
+
+    # ------------------------------------------------------------------
+    # Step 2 — LLM selection only
+    # ------------------------------------------------------------------
+    def _select_with_llm(
+        self, EE: str, VE: str, C: str, candidates: List[str]
+    ) -> str:
+        padded = candidates + [""] * (3 - len(candidates))
+        prompt = self.prompt_template.format(
+            EE=EE,
+            VE=VE,
+            c1=padded[0],
+            c2=padded[1],
+            c3=padded[2],
+        )
+        try:
+            response = (self.llm_client.generate(
+                prompt, config=GenerationConfig(temperature=0.7, max_tokens=1024)
+            ) or "").strip()
+        except Exception:
+            return ""
+
+        for candidate in candidates:
+            if candidate and candidate in response:
+                return candidate
+        digit_match = re.search(r"(?:^|[\s：:])([1-9])(?:$|[\s。.,，])", response)
+        if digit_match and 1 <= int(digit_match.group(1)) <= len(candidates):
+            return candidates[int(digit_match.group(1)) - 1]
+        letter_match = re.search(r"(?:^|[\s：:])([ABC])(?:$|[\s。.,，])", response)
+        if letter_match:
+            index = "ABC".index(letter_match.group(1))
+            if index < len(candidates):
+                return candidates[index]
+        return ""

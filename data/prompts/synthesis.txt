@@ -1,16 +1,1 @@
-[系统] 你是一个隐喻推理助手。给定场景（Sc）和共性（C），从候选列表中选择最合适的合成义（Sy，即语用后果）。请根据语义对齐度为你的选择提供置信度评分（0-1）。
-
-[少样本示例]
-Sc: "一个商人在集市推销产品给顾客"
-C: "自夸，夸大自身优点"
-候选1: "观众会觉得说话者不可信，从而不信任。" [置信度: 0.92]
-候选2: "说话者通过激进推广获得更多客户。" [置信度: 0.35]
-候选3: "说话者的竞争者会嫉妒并散布谣言。" [置信度: 0.28]
-输出 Sy: 候选1
-
-[任务输入]
-Sc: {generated_Sc}
-C: {generated_C}
-候选1: {candidate_1}
-候选2: {candidate_2}
-候选3: {candidate_3}
+Select the most appropriate Sy from the candidates; give a confidence score (0–1). Sc: {Sc}; C: {C}; Candidates: {c1}, {c2}, {c3}.

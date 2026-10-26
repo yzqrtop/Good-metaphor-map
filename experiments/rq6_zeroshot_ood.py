@@ -1,174 +1,96 @@
 """
-RQ6: Zero-shot OOD Evaluation
+RQ6 — Zero-shot Out-of-Distribution
 
-Task: Generate 7-tuple → explain on out-of-distribution data
-Dataset: Golden OOD Set (200 entries)
-Metrics: BERTScore, Human Sy Agreement
+Protocol (paper, Table 6): generate the seven-tuple for 200 unseen supplemental
+entries and compare the generated Sy with the expert Sy annotation.
+Metrics: semantic similarity, character-level F1, BERTScore, DeepMet-S
+similarity and human Sy agreement.
 """
 
-from typing import Dict, Any, List, Optional
-from ..core.schema import GoodMTuple
-from ..operators import (
-    EntityExpansion,
-    VehicleExpansion,
-    CommonalityExtraction,
-    SceneGeneralization,
-    Synthesis
-)
-from ..embeddings import JinaEmbedder
-from ..datasets import OODDataset
-from ..models.llm_wrappers import BaseLLM
+from typing import Any, Dict, List, Optional
+
+from constraints.verifier import ConstraintVerifier
+from core.metrics import generation_quality, mean
+from core.pipeline import GoodMPipeline
+from datasets.ood_dataset import OODDataset
+from embeddings.bertscore import BERTScorer
+from embeddings.deepmets import DeepMetS
+from embeddings.jina_embedder import JinaEmbedder
+from llm_wrappers import BaseLLM
 
 
 class RQ6ZeroShotOOD:
-    """
-    RQ6: Zero-shot OOD Evaluation
-    
-    Evaluates GoodM framework's ability to generalize to 
-    out-of-distribution entries with zero-shot generation.
-    """
-    
+    """RQ6: zero-shot generalization on the golden OOD set."""
+
     def __init__(
         self,
         llm_client: Optional[BaseLLM] = None,
         embedder: Optional[JinaEmbedder] = None,
-        dataset_path: Optional[str] = None
+        dataset_path: Optional[str] = None,
+        limit: Optional[int] = None,
+        bertscore: Optional[BERTScorer] = None,
+        deepmets: Optional[DeepMetS] = None,
     ):
-        """
-        Initialize RQ6 experiment
-        
-        Args:
-            llm_client: LLM client for generation
-            embedder: Jina embedder for similarity
-            dataset_path: Path to OOD dataset
-        """
-        self.llm_client = llm_client
-        self.embedder = embedder
-        
-        # Initialize operators
-        self.entity_expander = EntityExpansion(llm_client, embedder)
-        self.vehicle_expander = VehicleExpansion(llm_client, embedder)
-        self.commonality_extractor = CommonalityExtraction(embedder)
-        self.scene_generator = SceneGeneralization(llm_client, embedder)
-        self.synthesizer = Synthesis(llm_client, embedder)
-        
-        # Load dataset
+        self.embedder = embedder or JinaEmbedder()
+        self.pipeline = GoodMPipeline(llm_client=llm_client, embedder=self.embedder)
+        self.verifier = ConstraintVerifier(self.embedder)
         self.dataset = OODDataset(dataset_path)
-        
+        self.limit = limit
+        self.bertscore = bertscore
+        self.deepmets = deepmets
+
     def run(self) -> Dict[str, Any]:
-        """
-        Run RQ6 experiment
-        
-        Returns:
-            Dict: Complete evaluation results
-        """
-        # Load OOD dataset
-        ood_data = self.dataset.to_tuples_with_labels()
-        
-        results = {
-            'rq': 'RQ6',
-            'task': 'Zero-shot OOD Evaluation',
-            'dataset': 'Golden OOD Set',
-            'num_instances': len(ood_data),
-            'results': self._evaluate(ood_data)
-        }
-        
-        return results
-    
-    def _evaluate(self, instances: List[Dict]) -> Dict[str, Any]:
-        """
-        Evaluate zero-shot OOD performance
-        
-        Args:
-            instances: OOD instances with expert labels
-            
-        Returns:
-            Dict: Evaluation metrics
-        """
-        bert_scores = []
-        sy_agreements = []
-        
-        for instance in instances:
-            # Get original tuple
-            original_tuple = GoodMTuple.from_dict(instance['tuple'])
-            
-            # Generate new tuple (zero-shot, no training on OOD)
-            generated_tuple = self._generate_seven_tuple(
-                original_tuple.E, 
-                original_tuple.V
-            )
-            
-            # Compute BERTScore between generated and original Sy
-            if self.embedder:
-                bert_score = self.embedder.cosine_similarity(
-                    generated_tuple.Sy, 
-                    original_tuple.Sy
-                )
-            else:
-                bert_score = 0.75  # Placeholder
-            
-            bert_scores.append(bert_score)
-            
-            # Compute human agreement (compared to expert labels)
-            gold_sy = instance.get('gold_sy', '')
-            if gold_sy and self.embedder:
-                agreement = self.embedder.cosine_similarity(generated_tuple.Sy, gold_sy)
-            else:
-                agreement = 0.70  # Placeholder
-            
-            sy_agreements.append(agreement)
-        
+        entries = self.dataset.load()
+        if self.limit:
+            entries = entries[: self.limit]
         return {
-            'bert_score': {
-                'mean': sum(bert_scores) / len(bert_scores) if bert_scores else 0.0,
-                'std': 0.0,  # Would compute in production
-                'individual': bert_scores
-            },
-            'human_sy_agreement': {
-                'mean': sum(sy_agreements) / len(sy_agreements) if sy_agreements else 0.0,
-                'std': 0.0,
-                'individual': sy_agreements
-            },
-            'num_instances': len(instances)
+            "rq": "RQ6",
+            "task": "Zero-shot OOD",
+            "dataset": self.dataset.data_path,
+            "num_instances": len(entries),
+            "results": self.evaluate(entries),
         }
-    
-    def _generate_seven_tuple(self, E: str, V: str) -> GoodMTuple:
-        """
-        Generate complete 7-tuple (zero-shot)
-        
-        Args:
-            E: Essence text
-            V: Vehicle text
-            
-        Returns:
-            GoodMTuple: Generated seven-tuple
-        """
-        EE = self.entity_expander.expand(E)
-        VE = self.vehicle_expander.expand(V)
-        C = self.commonality_extractor.extract(EE, VE)
-        Sc = self.scene_generator.generalize(EE, VE)
-        Sy = self.synthesizer.synthesize(Sc, C)
-        
-        return GoodMTuple(E=E, V=V, EE=EE, VE=VE, C=C, Sc=Sc, Sy=Sy)
-    
-    def get_decontamination_results(self) -> Dict[str, Any]:
-        """
-        Get decontamination analysis results
-        
-        Returns:
-            Dict: Decontamination statistics
-        """
-        return self.dataset.get_decontamination_stats()
-    
-    def get_human_agreement_details(self) -> Dict[str, Any]:
-        """
-        Get human agreement details
-        
-        Returns:
-            Dict: Human agreement statistics
-        """
-        return {
-            'kappa': self.dataset.get_human_agreement(),
-            'num_experts': 3,
-            'annotation_method': 'majority voting'
+
+    def evaluate(self, entries: List[Dict]) -> Dict[str, Any]:
+        generated, references, passed = [], [], []
+        records: List[Dict[str, Any]] = []
+
+        for entry in entries:
+            tuple_obj = self.pipeline.build(entry["E"], entry["V"])
+            reference = entry.get("Sy", "")
+            verification = self.verifier.verify_all(tuple_obj)
+
+            generated.append(tuple_obj.Sy)
+            references.append(reference)
+            passed.append(verification["overall"]["pass_rate"])
+            records.append({
+                "id": entry.get("id"),
+                "E": entry["E"],
+                "V": entry["V"],
+                "Sy": tuple_obj.Sy,
+                "reference_Sy": reference,
+                "cpr": verification["overall"]["pass_rate"],
+            })
+
+        quality = generation_quality(
+            generated, references, self.embedder, scorer=self.bertscore
+        )
+        result = {
+            "sem_sim": quality["sem_sim"],
+            "char_f1": quality["char_f1"],
+            "sy_agreement": mean([
+                self.embedder.cosine_similarity(g, r) if r else 0.0
+                for g, r in zip(generated, references)
+            ]),
+            "cpr": mean(passed),
+            "total": len(entries),
+            "per_instance": records,
         }
+        if self.bertscore:
+            result["bertscore_f1"] = quality["bertscore_f1"]
+        if self.deepmets:
+            result["deepmets_sim"] = mean([
+                self.deepmets.cosine_similarity(g, r) if r else 0.0
+                for g, r in zip(generated, references)
+            ])
+        return result

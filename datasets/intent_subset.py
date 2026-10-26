@@ -1,7 +1,7 @@
 """
 Intent Subset Dataset Loader
 
-2,000 CTRC instances with educate/persuade/warn labels (κ=0.76).
+2,000 CTRC instances with educate/persuade/warn labels.
 Used for RQ2 (Intent Prediction task).
 """
 
@@ -15,7 +15,7 @@ class IntentSubset:
     Intent Subset Dataset
     
     Contains 2,000 CTRC instances with intent labels
-    (educate/persuade/warn) annotated with κ=0.76 agreement.
+    (educate/persuade/warn) annotated by the experts.
     Used for Intent Prediction evaluation (RQ2).
     """
     
@@ -121,7 +121,6 @@ class IntentSubset:
                 'paragraph': entry['paragraph'],
                 'gold_intent': entry['intent'],
                 'sy_annotation': entry.get('sy_annotation', ''),
-                'Sy_Intent_Consistency': None  # To be computed during evaluation
             }
             results.append(result)
         
@@ -138,48 +137,33 @@ class IntentSubset:
             self.load()
         
         return {
-            'total_entries': 2000,
+            'total_entries': len(self._data),
             'source': 'CTRC subset',
             'intent_labels': self.INTENT_LABELS,
             'distribution': self.get_intent_distribution(),
-            'annotation_agreement': {
-                'kappa': 0.76,
-                'annotators': 3
-            },
             'evaluation_task': 'Intent Prediction (RQ2)'
         }
-    
-    def get_per_class_metrics(self) -> Dict[str, float]:
-        """
-        Get per-class baseline metrics (to be updated during evaluation)
-        
-        Returns:
-            Dict: Placeholder for per-class accuracy
-        """
-        return {
-            'educate': 0.0,
-            'persuade': 0.0,
-            'warn': 0.0
-        }
-    
+
     def compute_sy_intent_consistency(
-        self, 
-        sy_predictions: List[str], 
-        intent_predictions: List[str]
+        self,
+        sy_predictions: List[str],
+        intent_predictions: List[str],
+        embedder,
     ) -> float:
         """
-        Compute Sy-Intent Consistency metric
-        
-        Args:
-            sy_predictions: List of predicted Sy texts
-            intent_predictions: List of predicted intent labels
-            
-        Returns:
-            float: Consistency score
+        Compute Sy–Intent Consistency: mean cosine similarity between each
+        generated Sy and the prototype description of its predicted intent.
         """
         if len(sy_predictions) != len(intent_predictions):
             raise ValueError("Prediction lists must have the same length")
-        
-        # Placeholder: compute semantic consistency between Sy and intent
-        # In production, this would use embedding similarity
-        return 0.85  # Baseline from paper
+        if not sy_predictions:
+            return 0.0
+
+        from experiments.rq2_intent_prediction import INTENT_PROTOTYPES
+
+        scores = [
+            embedder.cosine_similarity(sy, INTENT_PROTOTYPES[intent])
+            for sy, intent in zip(sy_predictions, intent_predictions)
+            if intent in INTENT_PROTOTYPES
+        ]
+        return sum(scores) / len(scores) if scores else 0.0

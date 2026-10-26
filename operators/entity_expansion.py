@@ -1,181 +1,150 @@
 """
 Φ_EE Operator: Essence Explanation (E → EE)
 
-Expands E (Essence) into Essence Explanation via:
-1. Semantic Role Labeling (SRL) to extract Subject, Action, Object, Scene, Attributes
-2. HowNet knowledge retrieval to enrich attributes
-3. Fluency refinement ONLY using small LLM (Qwen2.5-1.5B, temp=0.1)
+Pipeline (paper, Appendix E, Operator 1):
+    1. Chinese SRL (LTP)            → subject / action / object / scene
+    2. Attribute retrieval          → HowNet sememes + Chinese Synonym Forest
+    3. Structured assembly          → fluent EE (no new semantic content)
+    4. Fluency refinement           → LLM at temperature=0.1, max_tokens=1024
 
-Important: The LLM is NOT used to generate new semantic content. It only assembles
-the pre-extracted structured components into a coherent sentence.
+The LLM never invents content: it receives the extracted slots and may only
+rephrase them. Without an LLM, ``_template_assemble`` builds the same EE
+deterministically from those slots.
 """
 
-from typing import Optional, Dict, Any, Set
 import os
-from ..models.llm_wrappers import BaseLLM
-from ..embeddings import JinaEmbedder
+from typing import Any, Dict, List, Optional
 
+from core.knowledge_base import HowNetKB
+from core.srl import SemanticRoleLabeler
+from core.tokenizer import ChineseTokenizer
+from embeddings.jina_embedder import JinaEmbedder
+from llm_wrappers import BaseLLM, GenerationConfig
 
 PROMPT_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "data", "prompts", "entity_expansion.txt"
+    "data", "prompts", "entity_expansion.txt",
 )
+
+# Sememe → human-readable role description (used only for the subject slot).
+ROLE_BY_SEMEME = {
+    "商贩": "摊贩",
+    "买方": "顾客",
+    "管理者": "经理",
+    "听众": "听众",
+    "接收者": "旁观者",
+    "政治": "政客",
+    "竞选": "候选人",
+    "学习": "学生",
+    "宗教": "修行者",
+    "残疾": "残障者",
+    "说话": "说话者",
+}
 
 
 class EntityExpansion:
-    """
-    Essence Explanation Operator (Φ_EE: E → L)
-
-    Pipeline:
-        SRL extraction → HowNet retrieval → structured components → LLM fluency assembly
-
-    Attributes:
-        llm_client: Small LLM (e.g., Qwen2.5-1.5B) used ONLY for fluency refinement
-        embedder: Jina embedder for faithfulness constraint verification
-        hownet_path: Path to HowNet knowledge base (optional)
-        prompt_template: Loaded from data/prompts/entity_expansion.txt
-    """
+    """Essence Explanation Operator (Φ_EE: E → L)."""
 
     def __init__(
         self,
         llm_client: Optional[BaseLLM] = None,
         embedder: Optional[JinaEmbedder] = None,
-        hownet_path: Optional[str] = None,
+        kb: Optional[HowNetKB] = None,
     ):
         self.llm_client = llm_client
         self.embedder = embedder
-        self.hownet_path = hownet_path
+        self.kb = kb or HowNetKB()
+        self.tokenizer: ChineseTokenizer = self.kb.build_tokenizer()
+        self.srl = SemanticRoleLabeler(self.kb)
         self.prompt_template = self._load_prompt_template()
 
     def _load_prompt_template(self) -> str:
         if os.path.exists(PROMPT_FILE):
             with open(PROMPT_FILE, "r", encoding="utf-8") as f:
                 return f.read()
-        return (
-            "[System] Assemble structured components into a coherent Essence Explanation.\n"
-            "[Task input]\nSubject: {extracted_subject}\nAction: {extracted_action}\n"
-            "Object: {extracted_object}\nScene: {extracted_scene}\nAttributes: {retrieved_attributes}\n"
-        )
+        raise FileNotFoundError(f"Prompt template not found: {PROMPT_FILE}")
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
     def expand(self, E: str) -> str:
-        """
-        Expand Essence E to Essence Explanation EE.
-
-        Args:
-            E: Essence text (e.g., "Wang Po selling melons")
-
-        Returns:
-            str: Fluency-assembled Essence Explanation (EE)
-        """
-        # Step 1: Semantic Role Labeling → extract structured components
-        semantic_components = self._extract_semantic_roles(E)
-
-        # Step 2: HowNet retrieval → enrich attributes
-        attributes = self._retrieve_hownet_attributes(E)
-        semantic_components["attributes"] = attributes
-
-        # Step 3: Assemble the prompt with structured components (no new content)
-        prompt = self._assemble_prompt(semantic_components)
-
-        # Step 4: LLM fluency refinement ONLY (temp=0.1, no semantic generation)
+        components = self.srl.analyze(E)
+        components["attributes"] = self._retrieve_attributes(components["tokens"])
         if self.llm_client:
-            EE = self._refine_fluency(prompt)
-        else:
-            EE = self._template_assemble(semantic_components)
+            refined = self._refine_fluency(self._assemble_prompt(components))
+            if refined:
+                return refined
+        return self._template_assemble(components)
 
-        return EE
+    # ------------------------------------------------------------------
+    # Step 2 — HowNet + Synonym Forest attribute retrieval
+    # ------------------------------------------------------------------
+    def _retrieve_attributes(self, tokens: List[str]) -> List[str]:
+        attributes: List[str] = []
+        for sememe in self.kb.sememes_of(tokens):
+            if sememe not in attributes:
+                attributes.append(sememe)
+        for synonym in self.kb.expand(tokens, top_k=3):
+            label = f"近义于“{synonym}”"
+            if label not in attributes:
+                attributes.append(label)
+        return attributes[:12]
 
-    def _extract_semantic_roles(self, E: str) -> Dict[str, str]:
-        """
-        Extract structured semantic roles from E via SRL.
-        Returns Subject, Action, Object, Scene.
-
-        Note: This is a simplified implementation. In production, use an
-        actual SRL model (e.g., LTP, BERT-based SRL) to parse the text.
-        """
-        roles = {
-            "subject": "",
-            "action": "",
-            "object": "",
-            "scene": "",
-            "attributes": set(),
-        }
-        chars = [c for c in E]
-        if len(chars) >= 2:
-            roles["subject"] = chars[0]
-            roles["action"] = chars[1] if len(chars) > 1 else ""
-            roles["object"] = chars[-1] if len(chars) > 0 else ""
-        roles["scene"] = "everyday context"
-        roles["attributes"] = {"linguistic phrase", "idiomatic expression"}
-        return roles
-
-    def _retrieve_hownet_attributes(self, E: str) -> Set[str]:
-        """
-        Retrieve HowNet sememes and related knowledge for the Essence.
-
-        Note: Placeholder. In production, load the real HowNet knowledge base
-        from hownet_path and perform sememe lookup.
-        """
-        return {"Chinese idiom", "two-part allegorical saying", "cultural phrase"}
-
+    # ------------------------------------------------------------------
+    # Step 3 — assembly
+    # ------------------------------------------------------------------
     def _assemble_prompt(self, components: Dict[str, Any]) -> str:
-        """
-        Fill the prompt template with the extracted structured components.
-
-        The LLM receives ONLY the pre-extracted components. It cannot invent
-        new content; its job is strictly to rephrase these components into
-        a fluent natural sentence.
-        """
-        attrs = components.get("attributes", set())
-        attrs_str = "{" + ", ".join(f'"{a}"' for a in attrs) + "}"
         return self.prompt_template.format(
-            extracted_subject=components.get("subject", ""),
-            extracted_action=components.get("action", ""),
-            extracted_object=components.get("object", ""),
-            extracted_scene=components.get("scene", ""),
-            retrieved_attributes=attrs_str,
+            subject=components["subject"] or "（未识别）",
+            action=components["action"] or "（未识别）",
+            object=components["object"] or "（未识别）",
+            scene=components["scene"],
+            attrs="、".join(components["attributes"]),
         )
 
     def _template_assemble(self, components: Dict[str, Any]) -> str:
-        """
-        Rule-based fallback assembly when no LLM is available.
+        subject = components["subject"]
+        action = components["action"]
+        obj = components["object"]
+        scene = components["scene"]
 
-        Directly concatenates the structured components without any
-        additional semantic content.
-        """
-        s = components.get("subject", "")
-        a = components.get("action", "")
-        o = components.get("object", "")
-        sc = components.get("scene", "")
-        attrs = ", ".join(components.get("attributes", []))
-        if s and a and o:
-            return f"{s} is {a} {o} in the {sc}, characterized by {attrs}."
-        return f"A phrase involving {s}, {a}, {o} in {sc}."
+        # SRL could not recover an action-object frame: fall back to E itself
+        # rather than fabricating a scene that E does not contain.
+        if not action or not obj:
+            return self._source_essence(components)
+
+        description = self._describe_subject(subject)
+        if not subject:
+            clause = "某人"
+        elif description:
+            clause = f"{subject}是{description}"
+        else:
+            clause = subject
+        location = scene if scene.endswith("上") else f"{scene}上"
+        return f"{clause}，在{location}{action}{obj}。"
+
+    def _source_essence(self, components: Dict[str, Any]) -> str:
+        tokens = components.get("tokens", [])
+        return "".join(tokens) if tokens else components.get("subject", "")
+
+    def _describe_subject(self, subject: str) -> str:
+        if not subject:
+            return ""
+        sememes = set(self.kb.sememes(subject))
+        gender = "女" if "女性" in sememes else ("男" if "男性" in sememes else "")
+        age = "年长的" if "年长" in sememes else ("年幼的" if "年幼" in sememes else "")
+        role = next((ROLE_BY_SEMEME[s] for s in ROLE_BY_SEMEME if s in sememes), "")
+        if role:
+            return f"{age}{gender}{role}"
+        if age or gender:
+            return f"{age}{gender}人"
+        return ""
 
     def _refine_fluency(self, prompt: str) -> str:
-        """
-        Call LLM with temperature=0.1 for minimal, faithful fluency refinement.
-
-        Temperature is intentionally very low (0.1) to prevent the model from
-        hallucinating new semantic content. Per paper, max_tokens=1024.
-        """
         try:
             response = self.llm_client.generate(
-                prompt, config={"temperature": 0.1, "max_tokens": 1024}
+                prompt, config=GenerationConfig(temperature=0.1, max_tokens=1024)
             )
-            return response.strip() if response else ""
+            return (response or "").strip()
         except Exception:
             return ""
-
-    def verify_faithfulness(
-        self, E: str, EE: str, threshold: float = 0.78
-    ) -> Dict[str, Any]:
-        """
-        Faithfulness constraint: Sim(EE, E) >= tau_faith (0.78).
-
-        Ensures the expanded EE remains semantically faithful to the original E.
-        """
-        if not self.embedder:
-            return {"passed": True, "sim_EE_E": 1.0, "threshold": threshold}
-        sim = self.embedder.cosine_similarity(EE, E)
-        return {"passed": sim >= threshold, "sim_EE_E": sim, "threshold": threshold}

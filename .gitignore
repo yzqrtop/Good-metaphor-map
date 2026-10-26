@@ -46,4 +46,5 @@ logs/
 
 # Project-specific
 results/
+data/cache/
 data/rule_base/*.json.bak

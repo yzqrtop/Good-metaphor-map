@@ -1,242 +1,107 @@
 """
-RQ4: Hard & Frequency Analysis
+RQ4 — Hard & Frequency Analysis
 
-Task: Analyze performance on hard subset and frequency effects
-Dataset: Hard Subset / CTRC
-Metrics: Hard Accuracy, Gap Reduction, Frequency Gain
+Protocol (paper, Table 6): stratify RQ1 results by model confidence and by
+essence frequency, and compare the hard subset against the full test set.
+Reports hard-subset accuracy, the overall↔hard accuracy gap, and the
+high- vs low-frequency accuracy gain.
 """
 
-from typing import Dict, Any, List, Optional
-from ..core.schema import GoodMTuple
-from ..operators import (
-    EntityExpansion,
-    VehicleExpansion,
-    CommonalityExtraction,
-    SceneGeneralization,
-    Synthesis
-)
-from ..embeddings import JinaEmbedder
-from ..datasets import CTRCDataset
-from ..models.llm_wrappers import BaseLLM
+from typing import Any, Dict, List, Optional
+
+from core.metrics import accuracy, mean
+from core.pipeline import GoodMPipeline
+from datasets.ctrc_dataset import CTRCDataset
+from embeddings.jina_embedder import JinaEmbedder
+from experiments.common import parse_essence_vehicle, select_candidate
+from llm_wrappers import BaseLLM
 
 
 class RQ4HardFrequency:
-    """
-    RQ4: Hard & Frequency Analysis
-    
-    Analyzes GoodM performance stratified by:
-    - Model confidence (hard vs. easy instances)
-    - E-V frequency (frequent vs. rare metaphors)
-    """
-    
+    """RQ4: hard-subset and frequency-stratified analysis."""
+
     def __init__(
         self,
         llm_client: Optional[BaseLLM] = None,
         embedder: Optional[JinaEmbedder] = None,
-        dataset_path: Optional[str] = None
+        dataset_path: Optional[str] = None,
+        limit: Optional[int] = None,
     ):
-        """
-        Initialize RQ4 experiment
-        
-        Args:
-            llm_client: LLM client for generation
-            embedder: Jina embedder for similarity
-            dataset_path: Path to CTRC dataset
-        """
-        self.llm_client = llm_client
-        self.embedder = embedder
-        
-        # Initialize operators
-        self.entity_expander = EntityExpansion(llm_client, embedder)
-        self.vehicle_expander = VehicleExpansion(llm_client, embedder)
-        self.commonality_extractor = CommonalityExtraction(embedder)
-        self.scene_generator = SceneGeneralization(llm_client, embedder)
-        self.synthesizer = Synthesis(llm_client, embedder)
-        
-        # Load dataset
+        self.embedder = embedder or JinaEmbedder()
+        self.pipeline = GoodMPipeline(llm_client=llm_client, embedder=self.embedder)
         self.dataset = CTRCDataset(dataset_path)
-        
+        self.limit = limit
+
     def run(self) -> Dict[str, Any]:
-        """
-        Run RQ4 experiment
-        
-        Returns:
-            Dict: Complete evaluation results
-        """
-        # Load datasets
-        full_set = self.dataset.get_test_set()
-        hard_subset = self.dataset.get_hard_subset()
-        
-        results = {
-            'rq': 'RQ4',
-            'task': 'Hard & Frequency Analysis',
-            'full_set_size': len(full_set),
-            'hard_subset_size': len(hard_subset),
-            'results': {
-                'hard_vs_full': self._analyze_hard_vs_full(hard_subset, full_set),
-                'frequency_analysis': self._analyze_frequency(full_set)
-            }
-        }
-        
-        return results
-    
-    def _analyze_hard_vs_full(
-        self, 
-        hard_instances: List[Dict], 
-        full_instances: List[Dict]
-    ) -> Dict[str, Any]:
-        """
-        Analyze performance gap between hard and full set
-        
-        Args:
-            hard_instances: Hard subset instances
-            full_instances: Full test instances
-            
-        Returns:
-            Dict: Hard vs Full analysis
-        """
-        # Evaluate on hard subset
-        hard_results = self._evaluate_accuracy(hard_instances)
-        
-        # Evaluate on full set
-        full_results = self._evaluate_accuracy(full_instances)
-        
-        # Compute gap
-        gap = full_results['accuracy'] - hard_results['accuracy']
-        
+        all_entries = self.dataset.load()
+        frequency = self._essence_frequency(all_entries)
+        test_set = self.dataset.get_test_set()
+        hard_set = self.dataset.get_hard_subset()
+        if self.limit:
+            test_set, hard_set = test_set[: self.limit], hard_set[: self.limit]
+
+        overall = self._run_instances(test_set)
+        hard = self._run_instances(hard_set)
+
+        median = sorted(frequency.values())[len(frequency) // 2] if frequency else 0
+        high = [r for r in overall["records"] if frequency.get(r["E"], 0) > median]
+        low = [r for r in overall["records"] if frequency.get(r["E"], 0) <= median]
+
         return {
-            'hard_subset': {
-                'accuracy': hard_results['accuracy'],
-                'correct': hard_results['correct'],
-                'total': hard_results['total']
+            "rq": "RQ4",
+            "task": "Hard & Frequency Analysis",
+            "dataset": self.dataset.data_path,
+            "results": {
+                "overall_acc": overall["accuracy"],
+                "hard_acc": hard["accuracy"],
+                "acc_gap": overall["accuracy"] - hard["accuracy"],
+                "high_freq_acc": accuracy([r["predicted"] for r in high],
+                                          [r["gold"] for r in high]),
+                "low_freq_acc": accuracy([r["predicted"] for r in low],
+                                         [r["gold"] for r in low]),
+                "freq_gain": (
+                    accuracy([r["predicted"] for r in high], [r["gold"] for r in high])
+                    - accuracy([r["predicted"] for r in low], [r["gold"] for r in low])
+                ),
+                "mean_confidence": mean([r["confidence"] for r in overall["records"]]),
+                "num_test": len(test_set),
+                "num_hard": len(hard_set),
+                "frequency_bins": {
+                    "median": median,
+                    "high_n": len(high),
+                    "low_n": len(low),
+                },
             },
-            'full_set': {
-                'accuracy': full_results['accuracy'],
-                'correct': full_results['correct'],
-                'total': full_results['total']
-            },
-            'gap': gap,
-            'gap_reduction': self._compute_gap_reduction(gap)
         }
-    
-    def _analyze_frequency(self, instances: List[Dict]) -> Dict[str, Any]:
-        """
-        Analyze performance by E-V frequency
-        
-        Args:
-            instances: Test instances
-            
-        Returns:
-            Dict: Frequency analysis results
-        """
-        # Stratify by frequency (simplified)
-        high_freq = []
-        low_freq = []
-        
-        for instance in instances:
-            paragraph = instance['paragraph']
-            # Simplified frequency classification
-            if len(paragraph) < 30:
-                high_freq.append(instance)
-            else:
-                low_freq.append(instance)
-        
-        # Evaluate both groups
-        high_freq_results = self._evaluate_accuracy(high_freq)
-        low_freq_results = self._evaluate_accuracy(low_freq)
-        
+
+    def _essence_frequency(self, entries: List[Dict]) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for entry in entries:
+            try:
+                E, _ = parse_essence_vehicle(entry)
+            except ValueError:
+                continue
+            counts[E] = counts.get(E, 0) + 1
+        return counts
+
+    def _run_instances(self, instances: List[Dict]) -> Dict[str, Any]:
+        predictions, golds, records = [], [], []
+        for entry in instances:
+            E, V = parse_essence_vehicle(entry)
+            tuple_obj = self.pipeline.build(E, V)
+            predicted = select_candidate(tuple_obj, entry["candidates"], self.embedder)
+            confidence = self.embedder.cosine_similarity(
+                tuple_obj.Sy, entry["candidates"][predicted]
+            )
+            predictions.append(predicted)
+            golds.append(entry["answer"])
+            records.append({
+                "E": E,
+                "predicted": predicted,
+                "gold": entry["answer"],
+                "confidence": confidence,
+            })
         return {
-            'high_frequency': {
-                'accuracy': high_freq_results['accuracy'],
-                'count': len(high_freq)
-            },
-            'low_frequency': {
-                'accuracy': low_freq_results['accuracy'],
-                'count': len(low_freq)
-            },
-            'frequency_gain': high_freq_results['accuracy'] - low_freq_results['accuracy']
+            "accuracy": accuracy(predictions, golds),
+            "records": records,
         }
-    
-    def _evaluate_accuracy(self, instances: List[Dict]) -> Dict[str, Any]:
-        """
-        Evaluate accuracy on instances
-        
-        Args:
-            instances: List of test instances
-            
-        Returns:
-            Dict: Accuracy results
-        """
-        correct = 0
-        total = len(instances)
-        
-        for instance in instances:
-            paragraph = instance['paragraph']
-            candidates = instance['candidates']
-            gold_answer = instance['answer']
-            
-            # Generate tuple and predict
-            tuple_obj = self._generate_seven_tuple(paragraph)
-            pred = self._select_answer(tuple_obj, candidates)
-            
-            if pred == gold_answer:
-                correct += 1
-        
-        return {
-            'accuracy': correct / total if total > 0 else 0.0,
-            'correct': correct,
-            'total': total
-        }
-    
-    def _compute_gap_reduction(self, original_gap: float) -> float:
-        """
-        Compute gap reduction (compared to baseline)
-        
-        Args:
-            original_gap: Original performance gap
-            
-        Returns:
-            float: Gap reduction percentage
-        """
-        # Placeholder: GoodM reduces gap by ~30%
-        baseline_gap = 0.118  # 11.8% baseline gap
-        reduced_gap = original_gap
-        
-        if baseline_gap > 0:
-            reduction = (baseline_gap - reduced_gap) / baseline_gap
-        else:
-            reduction = 0.0
-        
-        return max(0.0, min(1.0, reduction))
-    
-    def _generate_seven_tuple(self, paragraph: str) -> GoodMTuple:
-        """Generate complete 7-tuple"""
-        E, V = self._parse_essence_vehicle(paragraph)
-        EE = self.entity_expander.expand(E)
-        VE = self.vehicle_expander.expand(V)
-        C = self.commonality_extractor.extract(EE, VE)
-        Sc = self.scene_generator.generalize(EE, VE)
-        Sy = self.synthesizer.synthesize(Sc, C)
-        return GoodMTuple(E=E, V=V, EE=EE, VE=VE, C=C, Sc=Sc, Sy=Sy)
-    
-    def _parse_essence_vehicle(self, paragraph: str) -> tuple:
-        """Parse Essence and Vehicle"""
-        if ' - ' in paragraph:
-            parts = paragraph.split(' - ', 1)
-            return parts[0], parts[1]
-        return paragraph, paragraph
-    
-    def _select_answer(self, tuple_obj: GoodMTuple, candidates: List[str]) -> int:
-        """Select best answer"""
-        if not self.embedder:
-            return 0
-        
-        best_score = -1
-        best_idx = 0
-        for i, candidate in enumerate(candidates):
-            score = self.embedder.cosine_similarity(candidate, tuple_obj.Sy)
-            score += self.embedder.cosine_similarity(candidate, tuple_obj.C)
-            if score > best_score:
-                best_score = score
-                best_idx = i
-        return best_idx

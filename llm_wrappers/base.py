@@ -12,7 +12,7 @@ from dataclasses import dataclass
 class GenerationConfig:
     """Generation configuration"""
     temperature: float = 0.7
-    max_tokens: int = 2048
+    max_tokens: int = 1024
     top_p: float = 0.9
     frequency_penalty: float = 0.0
     presence_penalty: float = 0.0

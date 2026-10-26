@@ -1,7 +1,7 @@
 """
 Golden OOD Dataset Loader
 
-200 entries from Supplemental Volume with Sy labels by 3 experts (κ=0.79).
+200 entries from the Supplemental Volume annotated by domain experts.
 Multi-layer decontamination against C4 (<3% flagged).
 """
 
@@ -83,14 +83,28 @@ class OODDataset:
         
         return labels
     
-    def get_human_agreement(self) -> float:
+    def get_human_agreement(self) -> Optional[float]:
         """
-        Get human agreement score
-        
-        Returns:
-            float: Agreement score (Krippendorff's alpha)
+        Observed agreement among the expert Sy annotations.
+
+        Computed from ``expert_labels``; with fewer than two annotators per
+        entry no agreement can be estimated, so None is returned instead of a
+        constant.
         """
-        return 0.79  # As reported in paper
+        if not self._loaded:
+            self.load()
+
+        agreements = []
+        for entry in self._data:
+            labels = list(entry.get('expert_labels', {}).values())
+            if len(labels) < 2:
+                continue
+            majority = max(set(labels), key=labels.count)
+            agreements.append(labels.count(majority) / len(labels))
+
+        if not agreements:
+            return None
+        return sum(agreements) / len(agreements)
 
     def get_decontamination_stats(self) -> Dict[str, Any]:
         """
@@ -126,13 +140,8 @@ class OODDataset:
             self.load()
         
         return {
-            'total_entries': 200,
+            'total_entries': len(self._data),
             'source': 'Supplemental Volume',
-            'labeling': '3 experts',
-            'agreement': {
-                'kappa': 0.79,
-                'method': 'majority voting'
-            },
             'decontamination': self.get_decontamination_stats(),
             'evaluation_task': 'Zero-shot OOD (RQ6)'
         }

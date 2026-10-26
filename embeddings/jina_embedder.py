@@ -1,206 +1,107 @@
 """
-Jina Embedding Module
+Jina-embeddings-v3 client.
 
-Provides integration with Jina-embeddings-v3 for:
-- Cosine similarity computation
-- Text embedding generation
-- Semantic matching
+This is the embedding backend used for every similarity in the paper: the four
+constraint checks, Φ_C's overlap verification, Φ_Sc's candidate ranking and
+Φ_Sy's rule retrieval. It is an online service — ``JINA_API_KEY`` must be set
+(or an ``api_key`` passed in) and the call fails loudly otherwise.
 """
 
-from typing import List, Optional
+import os
+from typing import Dict, List, Optional
+
 import numpy as np
+
+JINA_ENDPOINT = "https://api.jina.ai/v1/embeddings"
 
 
 class JinaEmbedder:
-    """
-    Jina Embeddings-v3 Integration
-    
-    Provides text embedding and cosine similarity computation
-    using Jina's embedding model for semantic verification.
-    """
-    
+    """Jina-embeddings-v3 compatibility layer (768-d, text-matching task)."""
+
     def __init__(
         self,
         model_name: str = "jina-embeddings-v3",
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        device: Optional[str] = None
+        dimension: int = 768,
     ):
-        """
-        Initialize Jina Embedder
-        
-        Args:
-            model_name: Model name (default: jina-embeddings-v3)
-            api_key: API key for Jina API
-            base_url: Base URL for API
-            device: Computing device
-        """
         self.model_name = model_name
-        self.api_key = api_key
-        self.base_url = base_url
-        self.device = device
-        self._model = None
-        self._initialized = False
-        
-    def initialize(self) -> None:
-        """
-        Initialize the embedding model (lazy loading)
-        """
-        if self._initialized:
-            return
-        
-        try:
-            # Try to import and initialize the model
-            # This is a placeholder for actual Jina model loading
-            self._initialized = True
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize Jina embedder: {e}")
-    
+        self.api_key = api_key or os.getenv("JINA_API_KEY")
+        if not self.api_key:
+            raise RuntimeError(
+                "JINA_API_KEY is required: Jina-embeddings-v3 is the embedding "
+                "backend for all constraint checks."
+            )
+        self.base_url = base_url or JINA_ENDPOINT
+        self.dimension = dimension
+        self._cache: Dict[str, np.ndarray] = {}
+
+    # ------------------------------------------------------------------
+    # Encoding
+    # ------------------------------------------------------------------
     def encode(self, text: str) -> np.ndarray:
-        """
-        Encode text to embedding vector
-        
-        Args:
-            text: Input text
-            
-        Returns:
-            np.ndarray: Embedding vector
-        """
-        self._ensure_initialized()
-        
-        # Placeholder: generate random embedding for demonstration
-        # In production, this would call the actual Jina API/model
-        embedding = np.random.randn(768)
-        embedding = embedding / np.linalg.norm(embedding)  # Normalize
-        return embedding
-    
+        text = text or ""
+        if text in self._cache:
+            return self._cache[text]
+        vector = self._encode_api(text)
+        self._cache[text] = vector
+        return vector
+
     def encode_batch(self, texts: List[str]) -> np.ndarray:
-        """
-        Encode multiple texts to embedding vectors
-        
-        Args:
-            texts: List of input texts
-            
-        Returns:
-            np.ndarray: Matrix of embedding vectors (n x 768)
-        """
-        self._ensure_initialized()
-        
-        embeddings = []
-        for text in texts:
-            embeddings.append(self.encode(text))
-        
-        return np.array(embeddings)
-    
-    def cosine_similarity(self, text1: str, text2: str) -> float:
-        """
-        Compute cosine similarity between two texts
-        
-        Args:
-            text1: First text
-            text2: Second text
-            
-        Returns:
-            float: Cosine similarity score (0.0 to 1.0)
-        """
-        emb1 = self.encode(text1)
-        emb2 = self.encode(text2)
-        
-        return self._cosine_similarity_from_embeddings(emb1, emb2)
-    
-    def batch_cosine_similarity(
-        self, 
-        text1: str, 
-        texts: List[str]
-    ) -> List[float]:
-        """
-        Compute cosine similarity between one text and multiple texts
-        
-        Args:
-            text1: Reference text
-            texts: List of texts to compare
-            
-        Returns:
-            List[float]: List of cosine similarity scores
-        """
-        emb1 = self.encode(text1)
-        embeddings = self.encode_batch(texts)
-        
-        similarities = []
-        for i in range(len(texts)):
-            sim = self._cosine_similarity_from_embeddings(emb1, embeddings[i])
-            similarities.append(sim)
-        
-        return similarities
-    
-    def _cosine_similarity_from_embeddings(
-        self, 
-        emb1: np.ndarray, 
-        emb2: np.ndarray
-    ) -> float:
-        """
-        Compute cosine similarity between two embedding vectors
-        
-        Args:
-            emb1: First embedding vector
-            emb2: Second embedding vector
-            
-        Returns:
-            float: Cosine similarity score
-        """
-        # Ensure normalized vectors
-        norm1 = np.linalg.norm(emb1)
-        norm2 = np.linalg.norm(emb2)
-        
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
-        
-        # Compute cosine similarity
-        similarity = np.dot(emb1, emb2) / (norm1 * norm2)
-        
-        # Clamp to [0, 1] range (absolute cosine similarity)
-        return float(max(0.0, min(1.0, similarity)))
-    
-    def _ensure_initialized(self) -> None:
-        """
-        Ensure the model is initialized
-        """
-        if not self._initialized:
-            self.initialize()
-    
-    def get_embedding_dimension(self) -> int:
-        """
-        Get the embedding dimension
-        
-        Returns:
-            int: Embedding dimension (768 for Jina-embeddings-v3)
-        """
-        return 768
-    
-    def semantic_match(
-        self, 
-        query: str, 
-        candidates: List[str], 
-        top_k: int = 1
-    ) -> List[tuple]:
-        """
-        Find top-k semantically matching candidates
-        
-        Args:
-            query: Query text
-            candidates: List of candidate texts
-            top_k: Number of top matches to return
-            
-        Returns:
-            List[tuple]: List of (candidate, score) tuples
-        """
-        similarities = self.batch_cosine_similarity(query, candidates)
-        
-        # Sort by similarity score
-        ranked = sorted(
-            zip(candidates, similarities), 
-            key=lambda x: x[1], 
-            reverse=True
+        return (
+            np.vstack([self.encode(t) for t in texts])
+            if texts else np.zeros((0, self.dimension))
         )
-        
+
+    def _encode_api(self, text: str) -> np.ndarray:
+        import requests
+
+        response = requests.post(
+            self.base_url,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.model_name,
+                "input": [text],
+                "task": "text-matching",
+                "dimensions": self.dimension,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        vector = np.asarray(response.json()["data"][0]["embedding"], dtype=float)
+        return self._normalize(vector)
+
+    @staticmethod
+    def _normalize(vector: np.ndarray) -> np.ndarray:
+        norm = np.linalg.norm(vector)
+        if norm == 0:
+            return vector
+        return vector / norm
+
+    # ------------------------------------------------------------------
+    # Similarity
+    # ------------------------------------------------------------------
+    def cosine_similarity(self, text1: str, text2: str) -> float:
+        return self._cosine(self.encode(text1), self.encode(text2))
+
+    def batch_cosine_similarity(self, text1: str, texts: List[str]) -> List[float]:
+        emb1 = self.encode(text1)
+        return [self._cosine(emb1, self.encode(t)) for t in texts]
+
+    @staticmethod
+    def _cosine(emb1: np.ndarray, emb2: np.ndarray) -> float:
+        n1, n2 = np.linalg.norm(emb1), np.linalg.norm(emb2)
+        if n1 == 0 or n2 == 0:
+            return 0.0
+        return float(np.clip(np.dot(emb1, emb2) / (n1 * n2), 0.0, 1.0))
+
+    def semantic_match(self, query: str, candidates: List[str], top_k: int = 1):
+        scores = self.batch_cosine_similarity(query, candidates)
+        ranked = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
         return ranked[:top_k]
+
+    def get_embedding_dimension(self) -> int:
+        return self.dimension
